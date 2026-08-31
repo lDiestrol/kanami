@@ -44,7 +44,7 @@ presences включаются только через `GAME_TRACKING_ENABLED=tr
 
 ```bash
 git clone https://github.com/lDiestrol/kanami.git
-cd discord-bot
+cd kanami
 less scripts/install.sh
 sudo ./scripts/install.sh
 ```

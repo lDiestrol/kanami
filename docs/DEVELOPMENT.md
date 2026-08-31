@@ -6,7 +6,7 @@
 
 ```bash
 git clone https://github.com/lDiestrol/kanami.git
-cd discord-bot
+cd kanami
 uv sync
 ```
 

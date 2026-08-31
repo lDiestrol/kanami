@@ -61,7 +61,7 @@ optional Game Tracking при `GAME_TRACKING_ENABLED=true`; typing и DM trackin
 
    ```bash
    git clone https://github.com/lDiestrol/kanami.git
-   cd discord-bot
+   cd kanami
    sudo ./scripts/install.sh
    ```
 
