@@ -1,0 +1,49 @@
+[project]
+name = "discord-stats-bot"
+version = "0.1.0"
+description = "Self-hosted Discord activity statistics bot"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "aiohttp>=3.14",
+    "alembic>=1.14",
+    "asyncpg>=0.30",
+    "discord.py>=2.7",
+    "pydantic-settings>=2.7",
+    "python-multipart>=0.0.22",
+    "sqlalchemy[asyncio]>=2.0",
+    "starlette>=1.6.0",
+    "tzdata>=2025.2",
+    "uvicorn>=0.52.4",
+]
+
+[project.scripts]
+discord-stats-bot = "discord_stats_bot.main:main"
+kanami-web-admin = "discord_stats_bot.web.main:main"
+
+[build-system]
+requires = ["uv_build>=0.11.32,<0.12"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx2>=2.12.0",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+asyncio_mode = "strict"
+markers = [
+    "integration: tests that require explicitly configured external services",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

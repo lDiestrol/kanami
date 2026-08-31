@@ -1,0 +1,34 @@
+[Unit]
+Description=Kanami Web Admin
+Wants=network-online.target
+After=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=kanami-web
+Group=kanami-web
+WorkingDirectory=/opt/kanami
+EnvironmentFile=/etc/kanami/kanami-web-admin.env
+Environment=HOME=/var/lib/kanami-web
+ExecStart=/opt/kanami/.venv/bin/kanami-web-admin
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=30s
+TimeoutStopSec=30s
+UMask=0077
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

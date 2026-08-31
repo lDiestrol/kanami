@@ -1,0 +1,18 @@
+# Replace the hostname before use. Public DNS must already point to this host.
+kanami.example.com {
+    # Caddy obtains and renews a public certificate automatically.
+    route {
+        @root path /
+        redir @root /admin/ 302
+
+        @web_admin path /admin/*
+        reverse_proxy @web_admin 127.0.0.1:8000
+
+        respond 404
+    }
+
+    # HSTS is intentionally disabled in this copy-paste example. First configure
+    # DNS/TLS and complete HTTPS, OAuth and write-action smoke tests. Only then
+    # uncomment it: browsers cache HSTS until max-age expires.
+    # header Strict-Transport-Security "max-age=31536000"
+}

@@ -1,0 +1,66 @@
+# Put these zones in the nginx http {} block, outside server {}.
+limit_req_zone $binary_remote_addr zone=kanami_login:10m rate=10r/m;
+limit_req_zone $binary_remote_addr zone=kanami_callback:10m rate=20r/m;
+limit_req_zone $binary_remote_addr zone=kanami_write:10m rate=10r/m;
+
+server {
+    listen 80;
+    server_name kanami.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name kanami.example.com;
+
+    # Provision these with Let's Encrypt or another public CA.
+    ssl_certificate /etc/letsencrypt/live/kanami.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/kanami.example.com/privkey.pem;
+
+    client_max_body_size 10m;
+    # HSTS is intentionally disabled in this copy-paste example. First configure
+    # DNS/TLS and complete HTTPS, OAuth and write-action smoke tests. Only then
+    # uncomment it: browsers cache HSTS until max-age expires.
+    # add_header Strict-Transport-Security "max-age=31536000" always;
+
+    location = / {
+        return 302 /admin/;
+    }
+
+    location = /admin/login {
+        limit_req zone=kanami_login burst=5 nodelay;
+        include snippets/kanami-web-admin-proxy.conf;
+    }
+
+    location = /admin/auth/discord/callback {
+        limit_req zone=kanami_callback burst=10 nodelay;
+        include snippets/kanami-web-admin-proxy.conf;
+    }
+
+    location ^~ /admin/settings/ {
+        limit_req zone=kanami_write burst=5 nodelay;
+        include snippets/kanami-web-admin-proxy.conf;
+    }
+
+    location /admin/ {
+        include snippets/kanami-web-admin-proxy.conf;
+    }
+
+    location / {
+        return 404;
+    }
+
+    # There is intentionally no /control location. Never proxy TCP/8765.
+}
+
+# Copy deploy/nginx/snippets/kanami-web-admin-proxy.conf to
+# /etc/nginx/snippets/kanami-web-admin-proxy.conf. Its contents are:
+# proxy_pass http://127.0.0.1:8000;
+# proxy_http_version 1.1;
+# proxy_set_header Host $host;
+# proxy_set_header X-Forwarded-For "";
+# proxy_set_header X-Forwarded-Proto "";
+# proxy_set_header Forwarded "";
+# proxy_connect_timeout 5s;
+# proxy_send_timeout 30s;
+# proxy_read_timeout 30s;

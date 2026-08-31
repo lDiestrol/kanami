@@ -1,0 +1,22 @@
+[Unit]
+Description=Kanami Discord bot
+Wants=network-online.target
+After=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=kanami
+Group=kanami
+WorkingDirectory=/opt/kanami
+EnvironmentFile=/etc/kanami/kanami.env
+ExecStart=/opt/kanami/.venv/bin/discord-stats-bot
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=30s
+TimeoutStopSec=30s
+KillSignal=SIGINT
+SuccessExitStatus=130
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

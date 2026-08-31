@@ -1,0 +1,62 @@
+# Environment and local configuration
+.env
+.env.*
+*.env
+*.env.local
+!.env.example
+
+# Python cache and tooling
+__pycache__/
+*.py[cod]
+*$py.class
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.code-workspace
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.cache
+.DS_Store
+Thumbs.db
+
+# Local data
+data/
+local/
+instance/
+*.sqlite
+*.sqlite3
+*.db
+
+# Backups
+backups/
+backup/
+*.bak
+*.backup
+*.old
+*~

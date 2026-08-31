@@ -1,0 +1,16 @@
+# Normalize text files to LF in Git and in the working tree by default.
+* text=auto eol=lf
+
+# Explicit LF files.
+*.sh text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+Dockerfile text eol=lf
+
+# Windows command scripts use CRLF in the working tree.
+*.bat text eol=crlf
+*.cmd text eol=crlf
