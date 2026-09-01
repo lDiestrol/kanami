@@ -22,6 +22,7 @@ readonly PRODUCTION_BOT_EXECUTABLE="${PRODUCTION_VENV}/bin/discord-stats-bot"
 readonly INSTALL_DIR="${KANAMI_MANAGER_INSTALL_DIR:-/opt/kanami}"
 readonly UV_BOOTSTRAP_DIR="${KANAMI_MANAGER_UV_BOOTSTRAP_DIR:-/opt/kanami-uv}"
 readonly UV_CACHE_DIR="${KANAMI_MANAGER_UV_CACHE_DIR:-/var/cache/kanami/uv}"
+readonly WEB_ADMIN_EXECUTABLE="${KANAMI_MANAGER_WEB_ADMIN_EXECUTABLE:-/var/lib/kanami-web/.venv/bin/kanami-web-admin}"
 
 DOCTOR_FAILURES=0
 DOCTOR_UPDATE_FAILURES=0
@@ -1052,7 +1053,7 @@ show_doctor() {
     doctor_check_git "${checkout}"
     doctor_check_executable "${checkout}/.venv/bin/discord-stats-bot" \
         "Bot executable" true
-    doctor_check_executable "${checkout}/.venv/bin/kanami-web-admin" \
+    doctor_check_executable "${WEB_ADMIN_EXECUTABLE}" \
         "Web Admin executable" false
     doctor_check_executable "${UV_BOOTSTRAP_DIR}/bin/uv" \
         "uv bootstrap" true

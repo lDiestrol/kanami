@@ -8,6 +8,7 @@ NGINX_TEMPLATES = (
     REPOSITORY_ROOT / "deploy/nginx/kanami-same-host.conf.example",
 )
 CADDY_TEMPLATE = REPOSITORY_ROOT / "deploy/caddy/Caddyfile.example"
+WEB_ADMIN_UNIT = REPOSITORY_ROOT / "deploy/systemd/kanami-web-admin.service"
 
 
 @pytest.mark.parametrize("template_path", NGINX_TEMPLATES)
@@ -54,3 +55,30 @@ def test_remote_nginx_template_uses_non_production_example_address() -> None:
     config = NGINX_TEMPLATES[0].read_text(encoding="utf-8")
 
     assert "server 192.168.50.10:8000;" in config
+
+
+def test_canonical_web_admin_unit_uses_isolated_runtime_and_hardening() -> None:
+    unit = WEB_ADMIN_UNIT.read_text(encoding="utf-8")
+
+    for required in (
+        "User=kanami-web",
+        "Group=kanami-web",
+        "WorkingDirectory=/opt/kanami",
+        "EnvironmentFile=/etc/kanami/kanami-web-admin.env",
+        "Environment=HOME=/var/lib/kanami-web",
+        "ExecStart=/var/lib/kanami-web/.venv/bin/kanami-web-admin",
+        "NoNewPrivileges=true",
+        "PrivateTmp=true",
+        "ProtectSystem=strict",
+        "ProtectHome=true",
+        "ProtectKernelTunables=true",
+        "ProtectKernelModules=true",
+        "ProtectControlGroups=true",
+        "RestrictSUIDSGID=true",
+        "LockPersonality=true",
+        "CapabilityBoundingSet=",
+        "AmbientCapabilities=",
+        "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+    ):
+        assert required in unit
+    assert "/opt/kanami/.venv/bin/kanami-web-admin" not in unit

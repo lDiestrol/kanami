@@ -151,6 +151,12 @@ Installer поддерживает именно Debian 13 и:
 - валидирует Guild ID как decimal Discord snowflake в диапазоне
   `1..18446744073709551615`, а timezone — через Python `zoneinfo`; пустой
   timezone означает `UTC`;
+- после проверки timezone предлагает опционально подготовить Web Admin; ответ
+  по умолчанию — `No`, поэтому Core-only установка не создаёт web user, role,
+  env, unit или runtime;
+- при выборе Web Admin запрашивает OAuth Client ID, скрытый Client Secret,
+  точный HTTPS callback и один или несколько OWNER Discord User IDs, после чего
+  показывает единый summary без secret values;
 - устанавливает `ca-certificates`, `git`, Python/venv, `tzdata`, PostgreSQL и
   `openssl`;
 - создаёт system user `kanami` без interactive login;
@@ -171,6 +177,25 @@ Installer поддерживает именно Debian 13 и:
   `/etc/kanami/kanami.env` с готовыми обязательными core settings, mode `0640`
   и owner `root:kanami`;
 - применяет `alembic upgrade head` и устанавливает `kanami.service`.
+
+При выбранном Web Admin installer дополнительно создаёт system user
+`kanami-web`, отдельный runtime `/var/lib/kanami-web/.venv`, protected env
+`/etc/kanami/kanami-web-admin.env` (`root:kanami-web`, `0640`), отдельную
+PostgreSQL role `kanami_web_readonly` и canonical
+`kanami-web-admin.service`. Web runtime синхронизируется из того же trusted
+root-owned `/opt/kanami` и committed `uv.lock` через pinned `uv`, а executable
+находится в `/var/lib/kanami-web/.venv/bin/kanami-web-admin`.
+Explicit DB policy хранится в
+`deploy/postgresql/kanami-web-admin-grants.sql` и применяется после migrations.
+Она закрывает `PUBLIC` CONNECT/TEMPORARY для созданной Kanami database и
+`PUBLIC` CREATE для её `public` schema, затем выдаёт web role только CONNECT,
+schema USAGE, текущие SELECT, scoped Rules/audit writes и нужные sequences.
+
+OAuth Client Secret для deterministic systemd EnvironmentFile принимается как
+непустое значение только из letters, digits, `.`, `_` и `-`; длина и число
+сегментов не предполагаются. Redirect обязан быть absolute HTTPS URL с hostname
+и точным path `/admin/auth/discord/callback`, без credentials, query и fragment.
+OWNER IDs нормализуются в непустой deduplicated comma-separated список.
 
 Скрипт не перезаписывает существующий config, database, role или install tree.
 Если он видит неоднозначное частичное состояние PostgreSQL, то останавливается
@@ -261,11 +286,13 @@ Unit запускает `/opt/kanami/.venv/bin/discord-stats-bot` от поль�
 `kanami`, с working directory `/opt/kanami` и EnvironmentFile
 `/etc/kanami/kanami.env`. Миграции unit автоматически не запускает.
 
-Основной installer не создаёт optional `kanami-web` user, отдельный
-`kanami-web-admin.service` или `/etc/kanami/kanami-web-admin.env`. При
-развёртывании Web Admin не подключайте к нему основной bot env: используйте
-раздельный env example и настройте конкретный Git `safe.directory` по инструкции
-[WEB_ADMIN_DEPLOYMENT.md](WEB_ADMIN_DEPLOYMENT.md#git-metadata-при-раздельных-service-users).
+Если Web Admin выбран в wizard, installer подготавливает его отдельный user,
+runtime, env, DB role и unit, но намеренно не включает и не запускает service.
+Web env никогда не содержит `DISCORD_TOKEN` или Bot Control settings и не имеет
+доступа к core env. До первого запуска настройте reverse proxy/TLS/domain,
+сверьте OAuth redirect и выполните шаги из
+[WEB_ADMIN_DEPLOYMENT.md](WEB_ADMIN_DEPLOYMENT.md). Это завершение публичного
+deployment относится к D2.13, а не к installer foundation D2.12.
 
 ## Проверка установки
 
@@ -320,6 +347,17 @@ source отсутствует, не является regular readable file ил�
 update завершается до dependency sync, migrations и restart. При ошибке любого
 следующего этапа более поздние этапы также не выполняются. Локальные изменения,
 user data и config updater не удаляет.
+
+Если все canonical markers D2.12 Web Admin присутствуют, updater перед
+любыми update mutations проверяет exact owner/group/mode runtime, env и unit, а
+также требует точный systemd state `inactive`. Active или недостоверный state
+останавливает update до `git pull`: D2.12 не управляет Web lifecycle. После
+этого updater выполняет отдельный frozen/no-dev sync от `kanami-web` в
+`/var/lib/kanami-web/.venv`. При полном отсутствии Web Admin этот этап
+пропускается; неоднозначное частичное состояние завершает update с ошибкой без
+recursive permission repair. После migrations ACL policy применяется повторно,
+canonical web unit обновляется как `root:root`/`0644` и выполняется
+`daemon-reload`; Web Admin не запускается и не перезапускается.
 
 Внутренняя проверка updater-а подтверждает invariant уже доверенной canonical
 installation и обнаруживает последующий ownership drift. Она не является

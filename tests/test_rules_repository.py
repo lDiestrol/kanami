@@ -138,16 +138,24 @@ async def test_acceptance_insert_uses_named_conflict_constraint_and_returning() 
 
 
 @pytest.mark.asyncio
-async def test_accept_current_lock_uses_guild_row_for_update() -> None:
+async def test_rules_lock_uses_transaction_advisory_guild_contract() -> None:
     session = FakeSession()
     repository = SqlAlchemyRulesRepository(session)  # type: ignore[arg-type]
 
     await repository.lock_guild(10)
 
     statement_sql = sql(session.statements[0])
-    assert "FROM guilds" in statement_sql
-    assert "WHERE guilds.id =" in statement_sql
-    assert statement_sql.endswith("FOR UPDATE")
+    statement_params = (
+        session.statements[0]
+        .compile(
+            dialect=postgresql.dialect()  # type: ignore[attr-defined]
+        )
+        .params
+    )
+    assert "pg_advisory_xact_lock" in statement_sql
+    assert 10 in statement_params.values()
+    assert "FROM guilds" not in statement_sql
+    assert "FOR UPDATE" not in statement_sql
 
 
 @pytest.mark.asyncio

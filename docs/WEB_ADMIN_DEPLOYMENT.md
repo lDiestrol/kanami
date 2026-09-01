@@ -1,5 +1,11 @@
 # Публичное развёртывание Kanami Web Admin
 
+Debian 13 installer D2.12 может опционально подготовить Web Admin foundation:
+отдельные `kanami-web`, runtime, protected env, least-privilege DB role и
+systemd unit. Он не устанавливает proxy/TLS, не проверяет публичный callback, не
+включает Bot Control и не запускает Web Admin. Шаги ниже завершаются оператором
+в D2.13 перед первым запуском; prepared port 8000 нельзя публиковать напрямую.
+
 Web Admin публикуется только через TLS reverse proxy. Процесс Web Admin не имеет
 `DISCORD_TOKEN`, работает от отдельного пользователя, использует отдельную
 PostgreSQL role с минимально необходимыми правами и вызывает
@@ -180,7 +186,7 @@ numbered` и не потеряйте SSH-доступ. Kanami не меняет 
 /etc/kanami/kanami.env
   root:kanami 0640
   DISCORD_TOKEN
-  DISCORD_BOT_CONTROL_SHARED_SECRET
+  DISCORD_BOT_CONTROL_SHARED_SECRET (только если Bot Control настроен отдельно)
 
 /etc/kanami/kanami-web-admin.env
   root:kanami-web 0640
@@ -190,13 +196,15 @@ numbered` и не потеряйте SSH-доступ. Kanami не меняет 
   GAME_TRACKING_ENABLED
   GAME_CONFIRM_INTERVAL_SECONDS
   WEB_ADMIN_DISCORD_CLIENT_SECRET
-  WEB_ADMIN_BOT_CONTROL_SHARED_SECRET
+  WEB_ADMIN_BOT_CONTROL_SHARED_SECRET (не создаётся D2.12)
   (никогда не DISCORD_TOKEN)
 ```
 
 systemd читает `EnvironmentFile` до privilege drop, поэтому runtime user может не
-иметь прямого доступа к файлу. Shared control secret должен быть отдельным случайным
-значением не короче 32 символов и совпадать в bot/web env. После добавления Rules
+иметь прямого доступа к файлу. D2.12 не включает Bot Control и не создаёт его
+URL/shared secrets; это отдельный checkpoint. Если он будет настроен позднее,
+shared control secret должен быть отдельным случайным значением не короче 32
+символов и совпадать в bot/web env. После добавления Rules
 Admin web connection создаётся с `read_only=False`, поэтому PostgreSQL connection
 не получает `default_transaction_read_only=on`. Это не означает право записи во
 всю схему: production Web Admin DB role должна получать только необходимые
@@ -205,6 +213,14 @@ Admin web connection создаётся с `read_only=False`, поэтому Pos
 используемым ими sequences). Не выдавайте этой роли ownership схемы/database,
 `CREATE`, `TRUNCATE` или неограниченные write grants. Реальные секреты и настоящий
 `.env` не сохраняются в Git.
+
+D2.12 хранит эту explicit policy в
+`deploy/postgresql/kanami-web-admin-grants.sql`: installer применяет её после
+migrations, updater — повторно после migrations только для complete inactive
+Web installation. Policy отзывает у `PUBLIC` CONNECT/TEMPORARY на созданной
+Kanami database и CREATE на её `public` schema. Rules publish использует общий с
+bot acceptance transaction advisory guild lock, поэтому web role не получает
+`UPDATE` на `guilds`.
 
 За основу web-файла используйте отдельный безопасный пример
 [`deploy/systemd/kanami-web-admin.env.example`](../deploy/systemd/kanami-web-admin.env.example),
@@ -243,7 +259,7 @@ database и получает bot-side write права как owner.
 
 ### Git metadata при раздельных service users
 
-Checkout `/opt/kanami` остаётся во владении `kanami:kanami`, а Web Admin
+Checkout `/opt/kanami` остаётся во владении `root:root`, а Web Admin
 запускается как `kanami-web` без write-доступа к repository. Современный Git
 отклоняет repository другого владельца как `dubious ownership`, пока оператор
 не разрешит конкретный путь для конкретного web user. После создания home
@@ -263,11 +279,17 @@ Git-проверку доверия и не выдаёт filesystem write permis
 checkout, не добавляйте `kanami-web` write-доступ и не используйте
 `safe.directory=*`.
 
-Эта настройка намеренно остаётся deployment-командой. `scripts/install.sh` и
-`scripts/update.sh` управляют только основным `kanami.service`, не создают
-`kanami-web`/его home/web env и не должны молча изменять global Git config
-optional web-пользователя. Application code сохраняет безопасный fallback
-`Unknown`, если Git или metadata недоступны.
+D2.12 installer выполняет эту настройку только для явно выбранного нового
+`kanami-web` и проверяет read-only `rev-parse`. Он не меняет system/global Git
+config. Updater использует уже подготовленный user/runtime только при полном
+наборе canonical markers и не чинит partial state. Application code сохраняет
+безопасный fallback `Unknown`, если Git или metadata недоступны.
+
+Перед обновлением complete D2.12 installation updater проверяет canonical
+owner/group/mode каталогов, env и unit и требует `kanami-web-admin.service` в
+точном state `inactive`. Active или недостоверный state останавливает update до
+`git pull`; автоматического stop/start/restart нет. После успешных migrations
+updater refresh-ит web unit и выполняет `daemon-reload`, не запуская service.
 
 ## Checklist перед публикацией
 

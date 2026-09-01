@@ -2013,15 +2013,15 @@ def test_status_exposes_abnormal_unit_load_states(tmp_path: Path) -> None:
 
 def test_doctor_inactive_optional_web_admin_is_not_fatal(tmp_path: Path) -> None:
     checkout = create_checkout(tmp_path)
-    write_executable(checkout / ".venv/bin/kanami-web-admin")
-    run_git(checkout, "add", "--force", ".venv/bin/kanami-web-admin")
-    run_git(checkout, "commit", "-m", "add optional web executable")
+    web_executable = tmp_path / "kanami-web/.venv/bin/kanami-web-admin"
+    write_executable(web_executable)
     environment = create_manager_environment(
         tmp_path,
         checkout,
         web_load_state="loaded",
         web_active_state="inactive",
     )
+    environment["KANAMI_MANAGER_WEB_ADMIN_EXECUTABLE"] = str(web_executable)
 
     result = run_manager("doctor", environment=environment)
 
@@ -2030,6 +2030,18 @@ def test_doctor_inactive_optional_web_admin_is_not_fatal(tmp_path: Path) -> None
         result.stdout
     )
     assert "Overall: HEALTHY" in result.stdout
+
+
+def test_doctor_uses_canonical_optional_web_admin_executable() -> None:
+    source = MANAGER_SCRIPT.read_text(encoding="utf-8")
+    doctor = shell_function_source("show_doctor")
+
+    assert (
+        'readonly WEB_ADMIN_EXECUTABLE="${KANAMI_MANAGER_WEB_ADMIN_EXECUTABLE:-'
+        '/var/lib/kanami-web/.venv/bin/kanami-web-admin}"'
+    ) in source
+    assert 'doctor_check_executable "${WEB_ADMIN_EXECUTABLE}"' in doctor
+    assert '"${checkout}/.venv/bin/kanami-web-admin"' not in doctor
 
 
 def test_unavailable_systemctl_is_reported_without_shell_failure(

@@ -15,7 +15,6 @@ from discord_stats_bot.features.rules import (
 )
 from discord_stats_bot.persistence.models import (
     DiscordUser,
-    Guild,
     GuildMember,
     RuleAcceptance,
     Ruleset,
@@ -29,9 +28,8 @@ class SqlAlchemyRulesRepository:
         self._session = session
 
     async def lock_guild(self, guild_id: int) -> None:
-        await self._session.execute(
-            select(Guild.id).where(Guild.id == guild_id).with_for_update()
-        )
+        # Keep the established application-wide transaction lock key for a guild.
+        await self._session.execute(select(func.pg_advisory_xact_lock(guild_id)))
 
     async def get_current_published(self, guild_id: int) -> RulesetRecord | None:
         model = (

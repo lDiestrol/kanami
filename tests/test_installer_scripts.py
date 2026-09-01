@@ -10,6 +10,7 @@ import pytest
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = REPOSITORY_ROOT / "scripts/install.sh"
+WEB_GRANTS = REPOSITORY_ROOT / "deploy/postgresql/kanami-web-admin-grants.sql"
 type BashRunner = Callable[[str], subprocess.CompletedProcess[str]]
 
 
@@ -363,6 +364,62 @@ def test_cancellation_precedes_all_kanami_stateful_stages() -> None:
         assert cancellation < source.index(stage)
 
 
+def test_fail_before_confirmation_has_no_partial_warning(run_bash: BashRunner) -> None:
+    result = run_bash(
+        f"source {shlex_quote(INSTALLER.as_posix())}\n"
+        'installer_main_bashpid="${BASHPID}"\n'
+        'fail "pre-confirmation failure"'
+    )
+
+    assert result.returncode != 0
+    assert "pre-confirmation failure" in result.stderr
+    assert "may be partially completed" not in result.stderr
+
+
+def test_cancellation_has_no_partial_warning(run_bash: BashRunner) -> None:
+    result = run_bash(
+        f"source {shlex_quote(INSTALLER.as_posix())}\n"
+        'installer_main_bashpid="${BASHPID}"\n'
+        'exec 3<<<"n"\n'
+        "if ! confirm_installation; then\n"
+        '  log "Installation cancelled before creating Kanami production state"\n'
+        "fi"
+    )
+
+    assert result.returncode == 0
+    assert "Installation cancelled" in result.stdout
+    assert "may be partially completed" not in result.stderr
+
+
+def test_explicit_fail_after_confirmation_warns_once(run_bash: BashRunner) -> None:
+    result = run_bash(
+        f"source {shlex_quote(INSTALLER.as_posix())}\n"
+        'installer_main_bashpid="${BASHPID}"\n'
+        'installation_confirmed="true"\n'
+        "trap report_partial_installation ERR\n"
+        'fail "post-confirmation failure"'
+    )
+
+    assert result.returncode != 0
+    assert "post-confirmation failure" in result.stderr
+    assert result.stderr.count("may be partially completed") == 1
+
+
+def test_unexpected_failure_after_confirmation_warns_once(
+    run_bash: BashRunner,
+) -> None:
+    result = run_bash(
+        f"source {shlex_quote(INSTALLER.as_posix())}\n"
+        'installer_main_bashpid="${BASHPID}"\n'
+        'installation_confirmed="true"\n'
+        "trap report_partial_installation ERR\n"
+        "false"
+    )
+
+    assert result.returncode != 0
+    assert result.stderr.count("may be partially completed") == 1
+
+
 def test_protected_config_uses_collected_values_and_keeps_defaults() -> None:
     source = installer_source()
 
@@ -414,3 +471,292 @@ def test_installer_keeps_dependency_and_migration_ordering() -> None:
     assert source.index('log "Applying Alembic migrations"') < source.index(
         'log "Installing systemd unit without starting the bot"'
     )
+
+
+def test_web_admin_choice_defaults_to_disabled(run_bash: BashRunner) -> None:
+    function = installer_function(installer_source(), "read_web_admin_choice")
+    result = run_bash(
+        f'{function}\nconfigure_web_admin=true\nexec 3<<<""\n'
+        'read_web_admin_choice\nprintf "%s" "$configure_web_admin"'
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == "false"
+
+
+@pytest.mark.parametrize(
+    ("client_id", "expected_valid"),
+    [
+        ("1", True),
+        ("123456789012345678", True),
+        ("18446744073709551615", True),
+        ("0", False),
+        ("18446744073709551616", False),
+        ("client", False),
+        ("-1", False),
+    ],
+)
+def test_web_oauth_client_id_uses_snowflake_boundaries(
+    client_id: str, expected_valid: bool, run_bash: BashRunner
+) -> None:
+    function = installer_function(installer_source(), "is_valid_discord_guild_id")
+    result = run_bash(
+        'readonly MAX_DISCORD_SNOWFLAKE="18446744073709551615"\n'
+        f"{function}\nis_valid_discord_guild_id {shlex_quote(client_id)}"
+    )
+
+    assert (result.returncode == 0) is expected_valid
+
+
+@pytest.mark.parametrize(
+    ("raw_ids", "expected"),
+    [
+        ("1", "1"),
+        ("1,2,18446744073709551615", "1,2,18446744073709551615"),
+        (" 42 , 7 ", "42,7"),
+        ("42,7,42,007", "42,7"),
+    ],
+)
+def test_web_owner_ids_are_canonicalized(
+    raw_ids: str, expected: str, run_bash: BashRunner
+) -> None:
+    source = installer_source()
+    functions = "\n".join(
+        (
+            installer_function(source, "is_valid_discord_guild_id"),
+            installer_function(source, "normalize_web_owner_ids"),
+        )
+    )
+    result = run_bash(
+        'readonly MAX_DISCORD_SNOWFLAKE="18446744073709551615"\n'
+        f'{functions}\nweb_owner_ids=""\nnormalize_web_owner_ids '
+        f'{shlex_quote(raw_ids)}\nprintf "%s" "$web_owner_ids"'
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == expected
+
+
+@pytest.mark.parametrize(
+    "raw_ids",
+    ["", "0", "18446744073709551616", "1,,2", ",1", "1,", "1,alpha"],
+)
+def test_web_owner_ids_reject_invalid_lists(raw_ids: str, run_bash: BashRunner) -> None:
+    source = installer_source()
+    functions = "\n".join(
+        (
+            installer_function(source, "is_valid_discord_guild_id"),
+            installer_function(source, "normalize_web_owner_ids"),
+        )
+    )
+    result = run_bash(
+        'readonly MAX_DISCORD_SNOWFLAKE="18446744073709551615"\n'
+        f"{functions}\nnormalize_web_owner_ids {shlex_quote(raw_ids)}"
+    )
+
+    assert result.returncode != 0
+
+
+@pytest.mark.parametrize(
+    "redirect_uri",
+    [
+        "https://kanami.example.com/admin/auth/discord/callback",
+        "https://kanami.example.com:8443/admin/auth/discord/callback",
+    ],
+)
+def test_web_redirect_uri_accepts_production_https(
+    redirect_uri: str, run_bash: BashRunner
+) -> None:
+    function = installer_function(installer_source(), "is_valid_web_redirect_uri")
+    result = run_bash(
+        f"{function}\nis_valid_web_redirect_uri {shlex_quote(redirect_uri)}"
+    )
+
+    assert result.returncode == 0
+
+
+@pytest.mark.parametrize(
+    "redirect_uri",
+    [
+        "http://kanami.example.com/admin/auth/discord/callback",
+        "/admin/auth/discord/callback",
+        "https://user:pass@kanami.example.com/admin/auth/discord/callback",
+        "https://kanami.example.com/admin/auth/discord/callback?next=1",
+        "https://kanami.example.com/admin/auth/discord/callback#fragment",
+        "https://kanami.example.com/admin/callback",
+        "https:///admin/auth/discord/callback",
+        "https://kanami.example.com:99999/admin/auth/discord/callback",
+    ],
+)
+def test_web_redirect_uri_rejects_unsafe_shapes(
+    redirect_uri: str, run_bash: BashRunner
+) -> None:
+    function = installer_function(installer_source(), "is_valid_web_redirect_uri")
+    result = run_bash(
+        f"{function}\nis_valid_web_redirect_uri {shlex_quote(redirect_uri)}"
+    )
+
+    assert result.returncode != 0
+
+
+def test_web_oauth_secret_is_hidden_and_never_in_summary() -> None:
+    source = installer_source()
+    reader = installer_function(source, "read_web_oauth_client_secret")
+    summary = installer_function(source, "show_configuration_summary")
+
+    assert "read -r -s -u 3 web_oauth_client_secret" in reader
+    assert "OAuth Client Secret: configured (hidden)" in summary
+    assert "web_oauth_client_secret" not in summary
+    for child_process_marker in ("python", "env ", "openssl", "runuser"):
+        assert child_process_marker not in reader
+
+
+def test_web_summary_contains_only_safe_configuration(run_bash: BashRunner) -> None:
+    function = installer_function(installer_source(), "show_configuration_summary")
+    result = run_bash(
+        f"""
+        {function}
+        configure_web_admin=true
+        discord_token='hidden-bot-token'
+        discord_guild_id='123456789012345678'
+        report_timezone='UTC'
+        web_oauth_client_id='987654321'
+        web_oauth_client_secret='hidden-oauth-secret'
+        web_oauth_redirect_uri='https://kanami.example.com/admin/auth/discord/callback'
+        web_owner_ids='42,7'
+        web_database_url='postgresql+asyncpg://hidden-password@localhost/db'
+        exec 3>&1
+        show_configuration_summary
+        """
+    )
+
+    assert result.returncode == 0
+    assert "Web Admin: enabled" in result.stdout
+    assert "OAuth Client ID: 987654321" in result.stdout
+    assert "Allowed OWNER IDs: 42,7" in result.stdout
+    assert "Bind: 127.0.0.1:8000" in result.stdout
+    assert "Cookie Secure: true" in result.stdout
+    for secret in ("hidden-bot-token", "hidden-oauth-secret", "hidden-password"):
+        assert secret not in result.stdout
+
+
+def test_generated_web_configuration_is_isolated_and_protected() -> None:
+    source = installer_source()
+    function = installer_function(source, "write_web_configuration")
+
+    assert 'readonly WEB_CONFIG_FILE="${CONFIG_DIR}/kanami-web-admin.env"' in source
+    assert 'install -m 0640 -o root -g "${WEB_SERVICE_USER}" /dev/null' in function
+    for required in (
+        "DISCORD_GUILD_ID=%s",
+        "REPORT_TIMEZONE=%s",
+        "VOICE_MIN_SESSION_SECONDS=10",
+        "VOICE_CHECKPOINT_INTERVAL_SECONDS=60",
+        "GAME_TRACKING_ENABLED=false",
+        "GAME_CONFIRM_INTERVAL_SECONDS=60",
+        "WEB_ADMIN_HOST=127.0.0.1",
+        "WEB_ADMIN_PORT=8000",
+        "WEB_ADMIN_COOKIE_SECURE=true",
+        "WEB_ADMIN_SESSION_LIFETIME_SECONDS=28800",
+    ):
+        assert required in function
+    for forbidden in (
+        "DISCORD_TOKEN",
+        "WEB_ADMIN_BOT_CONTROL_URL",
+        "WEB_ADMIN_BOT_CONTROL_SHARED_SECRET",
+        "DISCORD_BOT_CONTROL_",
+    ):
+        assert forbidden not in function
+
+
+def test_web_runtime_is_separate_and_checkout_trust_is_preserved() -> None:
+    source = installer_source()
+    create_user = installer_function(source, "create_web_service_user")
+    sync_runtime = installer_function(source, "sync_web_runtime")
+    git_metadata = installer_function(source, "configure_web_git_metadata")
+
+    assert 'readonly WEB_SERVICE_USER="kanami-web"' in source
+    assert 'readonly WEB_VENV_DIR="${WEB_SERVICE_HOME}/.venv"' in source
+    assert 'readonly WEB_UV_BOOTSTRAP_DIR="${WEB_SERVICE_HOME}/uv"' in source
+    assert 'useradd --system --user-group --home-dir "${WEB_SERVICE_HOME}"' in (
+        create_user
+    )
+    assert '--shell /usr/sbin/nologin "${WEB_SERVICE_USER}"' in create_user
+    assert 'VIRTUAL_ENV="${WEB_VENV_DIR}"' in sync_runtime
+    assert '"${WEB_UV_BOOTSTRAP_DIR}/bin/uv" sync' in sync_runtime
+    assert "--active --frozen --no-dev" in sync_runtime
+    assert 'runuser -u "${WEB_SERVICE_USER}"' in sync_runtime
+    assert 'safe.directory "${INSTALL_DIR}"' in git_metadata
+    assert "safe.directory=*" not in git_metadata
+    assert 'usermod -a -G "${SERVICE_USER}"' not in source
+    assert 'chown -R "${WEB_SERVICE_USER}" "${INSTALL_DIR}"' not in source
+
+
+def test_web_database_grants_are_explicit_and_least_privilege() -> None:
+    source = installer_source()
+    apply_grants = installer_function(source, "apply_web_database_grants")
+    grants = WEB_GRANTS.read_text(encoding="utf-8")
+
+    assert "REVOKE CONNECT, TEMPORARY ON DATABASE discord_stats_prod FROM PUBLIC" in (
+        grants
+    )
+    assert "GRANT CONNECT ON DATABASE discord_stats_prod" in grants
+    assert "REVOKE CREATE ON SCHEMA public FROM PUBLIC" in grants
+    assert "GRANT USAGE ON SCHEMA public" in grants
+    assert "GRANT TEMPORARY" not in grants
+    assert "GRANT INSERT, UPDATE, DELETE ON TABLE rulesets" in grants
+    assert "GRANT INSERT ON TABLE audit_events" in grants
+    assert "rulesets_id_seq, audit_events_id_seq" in grants
+    assert "operational_health_observations" in grants
+    assert "GRANT INSERT ON TABLE operational_health_observations" not in grants
+    assert "GRANT UPDATE ON TABLE operational_health_observations" not in grants
+    assert "GRANT DELETE ON TABLE operational_health_observations" not in grants
+    for forbidden in (
+        "GRANT ALL",
+        "ALTER DEFAULT PRIVILEGES",
+        "ALTER DATABASE",
+        "ALTER SCHEMA",
+        "OWNER TO",
+        "GRANT CREATE ON SCHEMA",
+        "TRUNCATE",
+        "UPDATE ON TABLE guilds",
+    ):
+        assert forbidden not in grants
+    assert 'local grants_source="${INSTALL_DIR}/${WEB_GRANTS_SOURCE_RELATIVE}"' in (
+        apply_grants
+    )
+    assert "-f ${grants_source}" in apply_grants
+    assert "-r ${grants_source}" in apply_grants
+    assert "! -L ${grants_source}" in apply_grants
+    assert '--file="${grants_source}" "${DB_NAME}"' in apply_grants
+    assert source.index('log "Applying Alembic migrations"') < source.index(
+        'log "Applying least-privilege Web Admin PostgreSQL grants"'
+    )
+    role_creation = source[source.index('printf "CREATE ROLE %s LOGIN NOSUPERUSER') :]
+    for restriction in (
+        "NOSUPERUSER",
+        "NOCREATEDB",
+        "NOCREATEROLE",
+        "NOINHERIT",
+        "NOREPLICATION",
+        "NOBYPASSRLS",
+    ):
+        assert restriction in role_creation
+
+
+def test_web_admin_is_optional_and_never_auto_started() -> None:
+    source = installer_source()
+
+    choice = source.index("read_web_admin_choice")
+    confirmation = source.index("if ! confirm_installation; then")
+    create_user = source.index("create_web_service_user", confirmation)
+    create_database = source.index('log "Creating PostgreSQL role and database"')
+    assert choice < confirmation < create_user
+    assert confirmation < create_database
+    assert 'if [[ ${configure_web_admin} == "true" ]]; then' in source
+    for forbidden in (
+        "systemctl enable kanami-web-admin",
+        "systemctl start kanami-web-admin",
+        "systemctl enable --now kanami-web-admin",
+        "kanami web-start",
+    ):
+        assert forbidden not in source

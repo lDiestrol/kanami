@@ -36,11 +36,14 @@ class InMemoryRulesRepository:
     def __init__(self, current: RulesetRecord | None) -> None:
         self.current = current
         self.acceptances: dict[tuple[int, int, int], datetime] = {}
+        self.operations: list[str] = []
 
     async def lock_guild(self, guild_id: int) -> None:
         assert guild_id > 0
+        self.operations.append(f"lock:{guild_id}")
 
     async def get_current_published(self, guild_id: int) -> RulesetRecord | None:
+        self.operations.append(f"current:{guild_id}")
         if self.current is None or self.current.guild_id != guild_id:
             return None
         return self.current
@@ -105,6 +108,9 @@ async def test_successful_acceptance_is_idempotent_and_counted() -> None:
     assert statistics is not None
     assert statistics.accepted_count == 1
     assert repository.acceptances == {(10, 20, 1): accepted_at}
+    assert repository.operations.index("lock:10") < repository.operations.index(
+        "current:10"
+    )
 
 
 @pytest.mark.asyncio
@@ -193,6 +199,7 @@ class ManagementRulesRepository(InMemoryRulesRepository):
         return published
 
     async def lock_guild(self, guild_id: int) -> None:
+        await super().lock_guild(guild_id)
         self.locked = True
 
 
@@ -220,10 +227,14 @@ async def test_management_create_edit_publish_and_immutability_invariants() -> N
     assert edited.requires_reacceptance is True
     assert edited.reacceptance_grace_days == 14
 
+    repository.operations.clear()
     published, previous = await service.publish_draft(10, draft.id, now=now)
     assert repository.locked is True
     assert previous is not None and previous.version == "1.0"
     assert published.status is RulesetStatus.PUBLISHED
+    assert repository.operations.index("lock:10") < repository.operations.index(
+        "current:10"
+    )
     assert repository.rules[1].status is RulesetStatus.ARCHIVED
     assert (
         sum(

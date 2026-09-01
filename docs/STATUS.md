@@ -69,6 +69,28 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что уже выполнено
 
+- D2.12: optional Web Admin wizard сохраняет default Core-only flow и до общего
+  confirmation собирает OAuth Client ID, hidden safe Client Secret, exact HTTPS
+  callback и canonical OWNER IDs. Opt-in provisioning создаёт отдельные
+  `kanami-web`, `/var/lib/kanami-web/.venv`, protected web env, explicit scoped
+  DB grants и hardened unit без auto-start. Updater refresh-ит только полный
+  canonical optional runtime от web user; doctor проверяет отдельный executable
+  read-only. Bot token/control, proxy/TLS/firewall и Web lifecycle не добавлены.
+- D2.12 security review-fix заменяет `guilds FOR UPDATE` общим для bot acceptance
+  и Web publish transaction advisory guild lock, поэтому web role не получает
+  `UPDATE guilds`. Tracked explicit ACL policy отзывает PUBLIC
+  CONNECT/TEMPORARY/CREATE в Kanami-owned DB/schema и повторно применяется
+  updater-ом после migrations. Updater до pull требует complete exact-metadata
+  Web installation и inactive unit, затем refresh-ит unit без restart. Installer
+  гарантирует ровно один partial-state warning после confirmation и ни одного до
+  него/cancellation.
+- D2.12 focused installer/updater/manager/deployment suite на Windows с Git Bash
+  вместе с Rules review regression tests содержит 171 passed и 153 ожидаемо
+  skipped Unix-only Manager cases. Полный hermetic suite с Git Bash в PATH
+  содержит 1472 passed, 169 skipped без Unix
+  semantics/`TEST_DATABASE_URL` и 39 существующих discord.py warnings. Ruff
+  lint/format, `git diff --check` и реальный Git Bash syntax check трёх scripts
+  проходят; clean Debian 13 VM smoke остаётся невыполненным.
 - D2.11: installer заменил обязательные Discord placeholders безопасным
   interactive core wizard через `/dev/tty`. Bot Token читается hidden и не
   передаётся через CLI/env или child process; Guild ID проверяется как positive
@@ -1041,12 +1063,14 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что сейчас делается
 
-D2.11 реализует и проверяет interactive Core configuration installer: hidden
-Discord token, bounded Guild ID, IANA timezone, безопасный summary,
-confirmation/cancellation и готовый protected `kanami.env`. D2.8 root-owned
-checkout, D2.9 trusted update и D2.10 doctor semantics не меняются. Web Admin
-installer, reverse proxy, TLS/domain/OAuth и новые Manager lifecycle commands в
-этот checkpoint не входят и ещё не реализованы.
+D2.12 реализует optional Web Admin installation foundation поверх сохранённого
+D2.11 Core flow. Default `No` оставляет Core-only provisioning; opt-in wizard
+собирает OAuth metadata/hidden secret и canonical OWNER IDs до общего final
+confirmation. Installer создаёт отдельные `kanami-web`, runtime/venv, protected
+env, scoped PostgreSQL role и hardened unit, но не запускает Web Admin. Updater
+опционально refresh-ит отдельный web runtime, а Manager doctor проверяет новый
+canonical executable только read-only. Reverse proxy, TLS/domain, Bot Control и
+Web lifecycle commands в D2.12 не входят.
 
 WUI-4A.1 и оба responsive hotfix развёрнуты в production. Первый hotfix исправил
 расположение compact-кнопки «Профиль» справа в member row на tablet width. Второй
@@ -1235,10 +1259,10 @@ automation, settings/env, migrations и intents для `/health` не добав
   недоступности БД или ещё не provisioned/stale membership доступ fail-closed.
 - Management UI не предоставляет Discord API search, invite flow, историю
   revoked grants или дополнительные роли; это сознательно вне текущего этапа.
-- Stage 4 production wiring не автоматизирован: installer пока не создаёт
-  отдельный Web Admin unit/env и не выдаёт процессам раздельные secrets. До
-  ручного разделения Web Admin нельзя давать общий bot env, потому что он содержит
-  `DISCORD_TOKEN`; control listener нельзя выводить за `127.0.0.1`.
+- D2.12 автоматизирует только isolated Web Admin foundation на чистой Debian 13
+  installation. Публичный reverse proxy/TLS/domain, OAuth callback verification,
+  Bot Control wiring и первый Web Admin start остаются ручными будущими шагами;
+  control listener нельзя выводить за `127.0.0.1`.
 - Sessions, OAuth transactions и write limiter process-local: restart отзывает
   sessions и очищает limiter; multi-worker deployment без общего session store не
   поддерживается. Reverse proxy network limiting документирован для Nginx, но
@@ -1410,11 +1434,11 @@ automation, settings/env, migrations и intents для `/health` не добав
 
 ## Следующие шаги
 
-1. Продолжить D2.12+ отдельными небольшими installer/manager checkpoint-этапами без
-   преждевременного проектирования следующей mutating команды.
-   Follow/Web Admin logs, install, Web Admin lifecycle, enable/disable,
+1. Выполнить D2.13 как отдельное завершение Web Admin deployment: reverse
+   proxy/TLS/domain, точная настройка и проверка OAuth callback перед ручным
+   первым запуском. Web Admin lifecycle/enable-disable/log commands,
    backup/restore/rollback и PostgreSQL/Alembic/HTTP doctor probes не входят в
-   D2.11.
+   D2.12.
 2. При следующем реальном этапе Rules Compliance / reacceptance проверить
    оставшийся production scenario: Publish новой Rules version → успешный DB
    commit → automatic Bot Control sync → обновление существующего managed message

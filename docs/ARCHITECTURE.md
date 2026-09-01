@@ -308,11 +308,12 @@ PostgreSQL как Unavailable; ошибка отдельного дополни�
 
 Git commit и branch читаются bounded subprocess adapter с fallback `Unknown`,
 если Git или repository недоступны; это metadata, а не выдуманный health signal.
-При раздельных production users checkout остаётся `kanami:kanami`, а Git trust
+При раздельных production users checkout остаётся `root:root`, а Git trust
 для `kanami-web` задаётся user-scoped точным `safe.directory=/opt/kanami` при
-deployment. Это не автоматизируется application code или bot-only installer:
-они не должны менять ownership/write permissions, использовать wildcard trust
-или управлять global config optional web user. Web unit фиксирует его
+deployment. D2.12 installer автоматизирует только этот user-scoped exact trust
+для явно выбранного optional web user; application code не меняет
+ownership/write permissions, не использует wildcard trust и не управляет
+system/global config. Web unit фиксирует его
 `HOME=/var/lib/kanami-web`, чтобы Git читал ожидаемый config.
 Uptime относится только к текущему Web Admin process. Existing Bot Control
 profile operation объективно различает Online, известный Not ready/Offline и
@@ -1315,6 +1316,44 @@ reacceptance workflow намеренно отложены.
   values в `/etc/kanami/kanami.env` (`root:kanami`, `0640`), после чего удаляет
   token variable. PostgreSQL password не запрашивается у оператора. Installer
   по-прежнему не включает и не запускает bot service автоматически.
+- D2.12 добавляет opt-in Web Admin foundation после core timezone validation.
+  Default `No` сохраняет Core-only flow; при `Yes` тот же `/dev/tty` собирает
+  bounded OAuth Client ID, hidden EnvironmentFile-safe Client Secret, exact
+  public HTTPS callback и canonical OWNER snowflakes до единственного final
+  confirmation. Summary показывает только safe metadata.
+- Web Admin запускается отдельным `kanami-web` с home, pinned uv bootstrap,
+  cache и venv под `/var/lib/kanami-web`; canonical executable —
+  `/var/lib/kanami-web/.venv/bin/kanami-web-admin`. Dependencies берутся из
+  trusted root-owned `/opt/kanami` и committed lock. User-scoped Git config
+  разрешает только `safe.directory=/opt/kanami`; ownership checkout не меняется.
+- Отдельный `/etc/kanami/kanami-web-admin.env` имеет `root:kanami-web`, `0640`
+  и не содержит Bot Token или Bot Control settings. Role
+  `kanami_web_readonly` получает explicit SELECT только для фактического web
+  read surface, scoped Rules writes, audit outbox INSERT и только нужные
+  sequences; ownership, CREATE, TRUNCATE, broad grants и default privileges не
+  выдаются. Tracked SQL policy детерминированно отзывает у `PUBLIC`
+  CONNECT/TEMPORARY на Kanami-owned database и CREATE на её `public` schema;
+  core owner сохраняет owner rights. Историческое имя role не означает
+  connection-wide read-only.
+- Rules acceptance и Web publish сериализуются одним repository contract через
+  `pg_advisory_xact_lock(guild_id)` в caller-owned transaction. Это уже
+  установленный application-wide guild lock key; отдельный guessed namespace
+  не вводится. Web publish больше не выполняет `guilds FOR UPDATE` и не требует
+  опасного `UPDATE guilds` grant.
+- Canonical Web unit устанавливается, но не enable/start. Reverse proxy, TLS,
+  DNS, firewall, public OAuth verification и Bot Control остаются вне D2.12;
+  публичное deployment completion — D2.13. Ошибка после confirmation может
+  оставить partial state и требует inspection, без rollback illusion.
+- Updater refresh-ит отдельный web runtime от `kanami-web` только при полном
+  наборе canonical D2.12 markers, exact metadata и подтверждённом inactive
+  systemd state. Эта pre-flight выполняется до pull/mutations; active,
+  ambiguous или partial deployment fail-closed. После migrations updater
+  повторно применяет tracked explicit ACL policy и обновляет canonical web unit
+  из trusted checkout с daemon-reload. Web service не stop/start/restart-ится.
+- После final confirmation installer помечает состояние явно: `fail()` печатает
+  один generic partial-state warning, а ERR trap покрывает неожиданные command
+  failures. До confirmation и при cancellation предупреждение не выводится;
+  автоматического rollback уже созданного state нет.
 - Update выполняется только из чистого Git tree через `git pull --ff-only`,
   locked dependency sync и migration до restart. Forced checkout/reset и
   автоматическое удаление данных не используются.
@@ -1368,6 +1407,9 @@ reacceptance workflow намеренно отложены.
   проверки. LoadState `masked`/`error`/`bad-setting` является fatal для
   обязательного bot unit и warning для optional Web Admin; status показывает
   abnormal LoadState явно и не подменяет его active-state.
+  Для установленного D2.12 unit doctor проверяет canonical отдельный executable
+  `/var/lib/kanami-web/.venv/bin/kanami-web-admin`; optional semantics и
+  read-only характер диагностики не меняются.
 - D2.3 устанавливает committed manager из уже клонированного `/opt/kanami` как
   regular file `/usr/local/bin/kanami` (`root:root`, `0755`), а не symlink на
   source checkout. Повторный copy тем же `install -m` идемпотентен. D2.4
