@@ -28,6 +28,46 @@ refresh_manager() {
     install -m 0755 -o root -g root "${manager_source}" "${MANAGER_FILE}"
 }
 
+install_service_unit() {
+    local service_source="${INSTALL_DIR}/deploy/kanami.service"
+
+    [[ -f ${service_source} && -r ${service_source} && \
+        ! -L ${service_source} ]] || \
+        fail "installed checkout service unit source is not a regular readable file"
+    install -m 0644 -o root -g root "${service_source}" "${SERVICE_FILE}"
+}
+
+validate_checkout_ownership() {
+    local unexpected_source
+    local writable_source
+    local unexpected_venv
+
+    [[ -d ${INSTALL_DIR} && ! -L ${INSTALL_DIR} ]] || \
+        fail "production checkout must be a regular directory"
+    [[ -d "${INSTALL_DIR}/.venv" && ! -L "${INSTALL_DIR}/.venv" ]] || \
+        fail "project environment is missing or is not a regular directory"
+
+    unexpected_source="$(find -P "${INSTALL_DIR}" -xdev \
+        -path "${INSTALL_DIR}/.venv" -prune -o \
+        \( ! -uid 0 -o ! -gid 0 \) -print -quit)"
+    [[ -z ${unexpected_source} ]] || \
+        fail "production checkout source must be root-owned: ${unexpected_source}"
+
+    writable_source="$(find -P "${INSTALL_DIR}" -xdev \
+        -path "${INSTALL_DIR}/.venv" -prune -o \
+        ! -type l -perm /022 -print -quit)"
+    [[ -z ${writable_source} ]] || \
+        fail "production checkout source is group/other writable: ${writable_source}"
+
+    unexpected_venv="$(find -P "${INSTALL_DIR}/.venv" -xdev \
+        \( ! -user "${SERVICE_USER}" -o ! -group "${SERVICE_USER}" \) \
+        -print -quit)"
+    [[ -z ${unexpected_venv} ]] || \
+        fail "project environment must be owned by ${SERVICE_USER}: ${unexpected_venv}"
+    runuser -u "${SERVICE_USER}" -- test -w "${INSTALL_DIR}/.venv" || \
+        fail "project environment is not writable by ${SERVICE_USER}"
+}
+
 [[ ${EUID} -eq 0 ]] || fail "run this updater with sudo"
 [[ -d "${INSTALL_DIR}/.git" ]] || fail "${INSTALL_DIR} is not a Git checkout"
 [[ -x "${UV_BOOTSTRAP_DIR}/bin/uv" ]] || \
@@ -42,24 +82,23 @@ runuser -u "${SERVICE_USER}" -- test -w "${UV_CACHE_DIR}" || \
     fail "uv cache is not writable by ${SERVICE_USER}"
 runuser -u "${SERVICE_USER}" -- test -w "${SERVICE_HOME}" || \
     fail "service home is not writable by ${SERVICE_USER}"
-foreign_owned="$(find "${INSTALL_DIR}" -xdev ! -user "${SERVICE_USER}" \
-    -print -quit)"
-[[ -z ${foreign_owned} ]] || \
-    fail "install tree contains files not owned by ${SERVICE_USER}: ${foreign_owned}"
+validate_checkout_ownership
 
-dirty="$(runuser -u "${SERVICE_USER}" -- env HOME="${SERVICE_HOME}" \
-    git -C "${INSTALL_DIR}" status --porcelain)"
+dirty="$(git -c safe.directory="${INSTALL_DIR}" -C "${INSTALL_DIR}" \
+    status --porcelain)"
 [[ -z ${dirty} ]] || fail "Git working tree has local changes; update aborted"
 
 database_url="$(awk -F= '$1 == "DATABASE_URL" {sub(/^[^=]*=/, ""); print; exit}' \
     "${CONFIG_FILE}")"
 [[ -n ${database_url} ]] || fail "DATABASE_URL is empty or missing"
 
-old_commit="$(runuser -u "${SERVICE_USER}" -- env HOME="${SERVICE_HOME}" \
-    git -C "${INSTALL_DIR}" rev-parse --short HEAD)"
+old_commit="$(git -c safe.directory="${INSTALL_DIR}" -C "${INSTALL_DIR}" \
+    rev-parse --short HEAD)"
 log "Updating clean checkout from commit ${old_commit}"
-runuser -u "${SERVICE_USER}" -- env HOME="${SERVICE_HOME}" \
-    git -C "${INSTALL_DIR}" pull --ff-only
+(
+    umask 022
+    git -c safe.directory="${INSTALL_DIR}" -C "${INSTALL_DIR}" pull --ff-only
+)
 
 log "Refreshing Kanami Manager command"
 refresh_manager
@@ -84,11 +123,11 @@ log "Applying Alembic migrations"
 unset database_url
 
 log "Updating systemd unit and restarting Kanami"
-install -m 0644 "${INSTALL_DIR}/deploy/kanami.service" "${SERVICE_FILE}"
+install_service_unit
 systemctl daemon-reload
 systemctl restart kanami
 systemctl is-active --quiet kanami || fail "kanami.service is not active"
 
-new_commit="$(runuser -u "${SERVICE_USER}" -- env HOME="${SERVICE_HOME}" \
-    git -C "${INSTALL_DIR}" rev-parse --short HEAD)"
+new_commit="$(git -c safe.directory="${INSTALL_DIR}" -C "${INSTALL_DIR}" \
+    rev-parse --short HEAD)"
 log "Update complete: ${old_commit} -> ${new_commit}; kanami.service is active"

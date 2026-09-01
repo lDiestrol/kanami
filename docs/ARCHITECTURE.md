@@ -1284,9 +1284,16 @@ reacceptance workflow намеренно отложены.
 - Приложение устанавливается в `/opt/kanami`, запускается отдельным system user
   `kanami`, а production environment хранится в
   `/etc/kanami/kanami.env` с ограниченными правами.
-- `/opt/kanami` остаётся чистым Git working tree; home/credential state
-  пользователя вынесен в `/var/lib/kanami`, bootstrap `uv` — в
-  `/opt/kanami-uv`, cache `uv` — в `/var/cache/kanami/uv`.
+- `/opt/kanami`, его `.git` и tracked source принадлежат `root:root` и не
+  writable для service user. Это Unix ownership boundary: процесс приложения
+  под `kanami` не должен контролировать `scripts/update.sh`,
+  `scripts/manager.sh`, `deploy/kanami.service` и другие источники, которые root
+  позднее выполняет или устанавливает. Clean Git tree сам по себе недостаточен,
+  потому что изменённый privileged source можно сохранить в локальном commit.
+- Единственное writable-исключение внутри production checkout — ignored
+  `/opt/kanami/.venv` с owner `kanami:kanami`. Home/credential state пользователя
+  вынесен в `/var/lib/kanami`, bootstrap `uv` — в `/opt/kanami-uv`, cache `uv` —
+  в `/var/cache/kanami/uv`; runtime/cache paths остаются service-user writable.
 - Entry point systemd — console script
   `/opt/kanami/.venv/bin/discord-stats-bot`; Alembic остаётся отдельным
   deployment step и не запускается application unit-ом.
@@ -1296,6 +1303,17 @@ reacceptance workflow намеренно отложены.
 - Update выполняется только из чистого Git tree через `git pull --ff-only`,
   locked dependency sync и migration до restart. Forced checkout/reset и
   автоматическое удаление данных не используются.
+- D2.8 выполняет production Git status/rev-parse/pull как root-owned deployment
+  operations с точным checkout и `safe.directory`. До pull updater, не следуя
+  symlink наружу, проверяет root ownership и отсутствие group/other write во
+  всём source tree кроме `.venv`; само исключение должно принадлежать
+  `kanami:kanami` и быть writable для service user. Эта validation является
+  defense-in-depth и проверкой invariant для уже доверенного root-owned updater;
+  она не превращает service-user-writable legacy `update.sh` в trusted
+  executable после его запуска с EUID 0. Поэтому старый all-`kanami` checkout
+  нельзя безопасно самомигрировать через `sudo ./scripts/update.sh`: до любого
+  privileged update нужны manual review и migration/reinstall из trusted source,
+  без автоматического recursive `chown` неизвестной установки.
 - Foundation будущего Kanami Manager — автономный Bash entrypoint
   `scripts/manager.sh`, рассчитанный на последующую установку как
   `/usr/local/bin/kanami`. D2.1 добавил `help`/`version`, а D2.2 — read-only

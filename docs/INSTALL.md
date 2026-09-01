@@ -122,7 +122,11 @@ Installer поддерживает именно Debian 13 и:
 - устанавливает `ca-certificates`, `git`, Python/venv, PostgreSQL и `openssl`;
 - создаёт system user `kanami` без interactive login;
 - клонирует текущую checked-out branch вместе с `.git` в `/opt/kanami` и
-  сохраняет исходный upstream `origin` для обновлений;
+  сохраняет исходный upstream `origin` для обновлений; production checkout,
+  `.git` и tracked source остаются `root:root` и недоступны для записи service
+  user;
+- создаёт узкое writable-исключение `/opt/kanami/.venv` с owner
+  `kanami:kanami`; остальной checkout не передаётся service user;
 - устанавливает copy `/opt/kanami/scripts/manager.sh` как
   `/usr/local/bin/kanami` (`root:root`, `0755`), без symlink на source checkout;
 - создаёт service home `/var/lib/kanami`, устанавливает pinned `uv` в
@@ -144,8 +148,8 @@ Installer поддерживает именно Debian 13 и:
 `main`; installer не хардкодит её и сохраняет branch исходного checkout.
 Публичный repository с HTTPS `origin` обновляется без Git credentials. Для
 private repository/fork заранее настройте deploy key или другой credential
-mechanism, доступный пользователю `kanami` с home `/var/lib/kanami`. Не помещайте
-PAT, private key или token в `kanami.env`, repository и примеры команд.
+mechanism, доступный root-контексту deployment updater. Не помещайте PAT, private
+key или token в `kanami.env`, repository и примеры команд.
 
 ## Конфигурация
 
@@ -239,21 +243,39 @@ token при обращении за помощью.
 
 ## Обновление
 
-Для установленного экземпляра:
+Следующая команда предназначена только для installation, уже соответствующей
+canonical D2.8 ownership model: `/opt/kanami`, включая
+`scripts/update.sh`, принадлежит `root:root` и не writable для service user.
 
 ```bash
 sudo /opt/kanami/scripts/update.sh
 ```
 
-Скрипт проверит чистоту Git tree, выполнит fast-forward-only pull, locked
-dependency sync и Alembic migration, обновит unit, перезапустит service и
-покажет итоговый commit. Сразу после успешного pull он также обновляет regular
-copy `/usr/local/bin/kanami` из committed
+Не запускайте checkout-local updater через `sudo` на старой installer-v2
+installation, где `/opt/kanami` или `scripts/update.sh` принадлежит `kanami`.
+Такой script находится в недоверенной writable service-user области: его
+внутренняя ownership validation не может восстановить доверие к коду, уже
+запущенному с EUID 0. Перед следующим privileged update необходимы manual
+review и migration/reinstall из trusted source; выполнять blind recursive
+`chown` не следует.
+
+Перед Git operations скрипт проверяет canonical ownership boundary: checkout,
+`.git` и source tree должны принадлежать `root:root` и не быть writable для
+group/other, а отдельная `.venv` должна принадлежать `kanami:kanami` и быть
+writable для service user. Затем updater от root проверяет чистоту Git tree,
+выполняет fast-forward-only pull, после чего под пользователем `kanami`
+выполняет locked dependency sync и Alembic migration, обновляет unit,
+перезапускает service и показывает итоговый commit. Сразу после успешного pull
+он также обновляет regular copy `/usr/local/bin/kanami` из committed
 `/opt/kanami/scripts/manager.sh`, сохраняя `root:root` и mode `0755`. Если этот
 source отсутствует, не является regular readable file или является symlink,
 update завершается до dependency sync, migrations и restart. При ошибке любого
 следующего этапа более поздние этапы также не выполняются. Локальные изменения,
 user data и config updater не удаляет.
+
+Внутренняя проверка updater-а подтверждает invariant уже доверенной canonical
+installation и обнаруживает последующий ownership drift. Она не является
+bootstrap-механизмом доверия или migration старого all-`kanami` checkout.
 
 Backup PostgreSQL перед значимым production update остаётся ответственностью
 оператора; автоматическая backup/restore policy пока не входит в проект.

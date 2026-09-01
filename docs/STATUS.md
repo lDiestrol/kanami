@@ -68,6 +68,16 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что уже выполнено
 
+- D2.8: production checkout `/opt/kanami`, `.git` и tracked source закреплены за
+  `root:root` без write access для service user. Узким writable-исключением
+  остаётся ignored `.venv` (`kanami:kanami`); runtime home и uv cache также
+  остаются service-user writable. Installer больше не делает recursive chown
+  checkout, updater выполняет Git operations от root и до pull валидирует новую
+  ownership policy как defense-in-depth уже доверенной canonical installation.
+  Legacy all-`kanami` installation требует manual migration/reinstall из trusted
+  source; её checkout-local `update.sh` нельзя запускать с root для
+  самомиграции, поскольку validation внутри уже запущенного script не создаёт
+  trust boundary.
 - D2.7: добавлены controlled root-only `kanami start`/`kanami stop` только для
   основного `kanami.service` через фиксированный `/usr/bin/systemctl`. Оба action
   проверяют `LoadState=loaded`; start не повторяет active service и подтверждает
@@ -1007,10 +1017,13 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что сейчас делается
 
-D2.7 подготовлен как отдельный checkpoint controlled start/stop только основного
-`kanami.service`. Web Admin lifecycle, enable/disable, остальные manager actions,
-rollback, PostgreSQL/Alembic/HTTP doctor probes и backup/restore в текущий scope
-не входят.
+D2.8 готовится как отдельный security/ownership checkpoint перед будущей
+командой `kanami update`: production checkout и privileged deployment sources
+становятся root-owned, а `.venv` остаётся минимальным writable-исключением для
+service user. Сама manager-команда `kanami update`, legacy ownership migration и
+остальные lifecycle/backup/restore функции в текущий scope не входят. До
+восстановления trust boundary старый service-user-writable checkout-local
+`update.sh` не должен запускаться через `sudo`.
 
 WUI-4A.1 и оба responsive hotfix развёрнуты в production. Первый hotfix исправил
 расположение compact-кнопки «Профиль» справа в member row на tablet width. Второй
@@ -1283,7 +1296,11 @@ automation, settings/env, migrations и intents для `/health` не добав
 - Конфигурационный контракт ограничен утверждёнными Discord, PostgreSQL, timezone, retention, voice threshold и logging-переменными.
 - Стандартный Python `logging` пишет в stdout/stderr и не раскрывает секреты.
 - Ruff используется как linter и formatter; async-тесты используют pytest-asyncio и временный PostgreSQL для DB integration tests.
-- Production пути: `/opt/kanami` для checkout, `/etc/kanami/kanami.env` для secrets/config; service работает как system user `kanami`.
+- Production пути: root-owned `/opt/kanami` для checkout и `.git`,
+  `/etc/kanami/kanami.env` для secrets/config; service работает как system user
+  `kanami`. Tracked source не writable для service account; ignored
+  `/opt/kanami/.venv`, `/var/lib/kanami` и `/var/cache/kanami/uv` принадлежат
+  `kanami` и остаются его минимальными writable paths.
 - Kanami Manager развивается как отдельный Bash entrypoint, пригодный для
   установки в `/usr/local/bin/kanami`. Read-only команды
   status/doctor/version/help/logs не требуют root со стороны Manager; D2.5
@@ -1298,6 +1315,14 @@ automation, settings/env, migrations и intents для `/health` не добав
   optional; hermetic tests подменяют read-only manager paths и `PATH`. Installer
   создаёт regular root-owned copy, а updater после успешного pull refresh-ит её
   из канонического installed checkout до dependency/migration/restart stages.
+- D2.8 закрепляет privilege boundary между runtime и deployment: root позднее
+  выполняет или устанавливает только source из root-owned checkout. Updater
+  проверяет root ownership/non-writability source tree и отдельную
+  `kanami:kanami` `.venv`, выполняет Git от root и не делает recursive ownership
+  repair. Проверка предназначена для trusted canonical updater и не делает
+  legacy checkout-local `update.sh`, writable пользователем `kanami`, безопасным
+  для запуска через `sudo`; такая installation требует manual trust restoration
+  из trusted source.
 - Миграции выполняются отдельной командой; приложение не запускает Alembic автоматически.
 - Lifecycle имеет единую точку запуска, graceful shutdown и централизованное управление background tasks.
 - Штатный SIGINT завершается успешно только после async cleanup Discord client/background tasks и database engine; entrypoint подавляет соответствующий `KeyboardInterrupt`, но не произвольную cancellation или runtime exceptions.
@@ -1352,10 +1377,11 @@ automation, settings/env, migrations и intents для `/health` не добав
 
 ## Следующие шаги
 
-1. Продолжить D2.8+ отдельными небольшими manager checkpoint-этапами.
+1. Продолжить D2.9+ отдельными небольшими manager checkpoint-этапами после
+   закрепления D2.8 trust boundary. `kanami update` ещё не реализован.
    Follow/Web Admin logs, update/install, Web Admin lifecycle, enable/disable,
    backup/restore/rollback и PostgreSQL/Alembic/HTTP doctor probes не входят в
-   D2.7.
+   D2.8.
 2. При следующем реальном этапе Rules Compliance / reacceptance проверить
    оставшийся production scenario: Publish новой Rules version → успешный DB
    commit → automatic Bot Control sync → обновление существующего managed message
