@@ -38,28 +38,37 @@ VM, `systemd` и локальный PostgreSQL. Предполагаются б�
 states и guild messages. Он не включает message content, typing или DM intents;
 presences включаются только через `GAME_TRACKING_ENABLED=true`.
 
-## Kanami Manager: read-only диагностика
+## Kanami Manager: установка и read-only меню
 
-В repository развивается foundation будущей управляющей команды `kanami`:
+Новая официальная установка копирует committed `scripts/manager.sh` из
+установленного checkout в `/usr/local/bin/kanami` с owner `root:root` и mode
+`0755`. После установки доступны:
 
 ```bash
-bash ./scripts/manager.sh help
-bash ./scripts/manager.sh version
-bash ./scripts/manager.sh status
-bash ./scripts/manager.sh doctor
+kanami help
+kanami version
+kanami status
+kanami doctor
+kanami menu
 ```
 
-На этапе D2.2 manager работает только в read-only режиме. `status` показывает
+Для разработки те же команды можно запускать как `bash ./scripts/manager.sh ...`.
+На этапе D2.3 manager работает только в read-only режиме. `status` показывает
 короткую сводку checkout и systemd services, а `doctor` проверяет foundation
 установки и возвращает ненулевой exit code при обязательных ошибках. Отдельный
 Web Admin остаётся optional: его отсутствие или inactive-state не делают
 основную bot installation нездоровой. Недоступные без root проверки systemd
 показываются как `WARN`/`SKIP`, а не считаются подтверждённой поломкой.
 
+При запуске `kanami` без аргументов интерактивное меню открывается только когда
+stdin и stdout являются TTY. В pipeline, cron и CI manager показывает help и не
+ожидает input. Явная команда `kanami menu` принимает пункты Status, Doctor,
+Version, Help и Exit; неверный выбор возвращает в меню, а EOF завершает его
+успешно.
+
 Эти команды не читают env-файлы и пока не выполняют PostgreSQL, Alembic или HTTP
-проверки. Установка как `/usr/local/bin/kanami`, интерактивное меню и любые
-lifecycle actions появятся в последующих этапах; текущие install/update scripts
-остаются основным deployment flow.
+проверки. Install/update/restart, backup/restore/rollback и другие lifecycle
+actions в меню отсутствуют.
 
 ## Автоматизированная установка
 
@@ -78,6 +87,8 @@ Installer поддерживает именно Debian 13 и:
 - создаёт system user `kanami` без interactive login;
 - клонирует текущую checked-out branch вместе с `.git` в `/opt/kanami` и
   сохраняет исходный upstream `origin` для обновлений;
+- устанавливает copy `/opt/kanami/scripts/manager.sh` как
+  `/usr/local/bin/kanami` (`root:root`, `0755`), без symlink на source checkout;
 - создаёт service home `/var/lib/kanami`, устанавливает pinned `uv` в
   `/opt/kanami-uv`, хранит его cache вне Git tree в `/var/cache/kanami/uv` и
   выполняет `uv sync --frozen --no-dev`;
@@ -202,6 +213,11 @@ sudo /opt/kanami/scripts/update.sh
 dependency sync и Alembic migration, обновит unit, перезапустит service и
 покажет итоговый commit. При ошибке dependency/migration следующие этапы не
 выполняются. Локальные изменения, user data и config он не удаляет.
+
+Временное ограничение D2.3: существующий `scripts/update.sh` ещё не обновляет
+копию `/usr/local/bin/kanami`. После обновления checkout manager требует
+отдельного ручного refresh; автоматизация этого шага относится к будущему
+updater v2 и пока не заявляется как готовая.
 
 Backup PostgreSQL перед значимым production update остаётся ответственностью
 оператора; автоматическая backup/restore policy пока не входит в проект.

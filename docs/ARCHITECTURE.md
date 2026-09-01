@@ -1313,6 +1313,15 @@ reacceptance workflow намеренно отложены.
   проверки. LoadState `masked`/`error`/`bad-setting` является fatal для
   обязательного bot unit и warning для optional Web Admin; status показывает
   abnormal LoadState явно и не подменяет его active-state.
+- D2.3 устанавливает committed manager из уже клонированного `/opt/kanami` как
+  regular file `/usr/local/bin/kanami` (`root:root`, `0755`), а не symlink на
+  source checkout. Повторный copy тем же `install -m` идемпотентен. Текущий
+  updater эту отдельную копию ещё не refresh-ит — это явное временное
+  ограничение до updater v2.
+- Menu является только presentation loop над существующими read-only
+  status/doctor/version/help functions. Неявный запуск меню требует TTY на stdin
+  и stdout; non-TTY запуск без аргументов показывает help, invalid input
+  повторяет меню, EOF завершается успешно. Lifecycle actions в D2.3 отсутствуют.
 - Секреты не хранятся в Git.
 - Web-панель в MVP отсутствует.
 
