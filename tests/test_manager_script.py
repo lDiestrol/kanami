@@ -69,6 +69,44 @@ def shell_function_source(name: str) -> str:
     return match.group(0)
 
 
+def create_logs_test_manager(
+    tmp_path: Path,
+    *,
+    journalctl_exit_code: int = 0,
+) -> tuple[Path, dict[str, str], Path]:
+    fake_journalctl = tmp_path / "bin/journalctl"
+    arguments_file = tmp_path / "journalctl-arguments.txt"
+    fake_journalctl.parent.mkdir(parents=True)
+    fake_journalctl.write_text(
+        """#!/usr/bin/env bash
+set -u
+printf '%s\n' "$@" > "${KANAMI_TEST_JOURNAL_ARGUMENTS_FILE:?}"
+printf 'fake journal line\n'
+exit "${KANAMI_TEST_JOURNAL_EXIT_CODE:-0}"
+""",
+        encoding="utf-8",
+    )
+    fake_journalctl.chmod(0o755)
+
+    source = MANAGER_SCRIPT.read_text(encoding="utf-8")
+    production_boundary = 'readonly JOURNALCTL="/usr/bin/journalctl"'
+    assert source.count(production_boundary) == 1
+    test_manager = tmp_path / "kanami"
+    test_manager.write_text(
+        source.replace(
+            production_boundary,
+            f'readonly JOURNALCTL="{fake_journalctl.as_posix()}"',
+        ),
+        encoding="utf-8",
+    )
+    test_manager.chmod(0o755)
+    environment = {
+        "KANAMI_TEST_JOURNAL_ARGUMENTS_FILE": arguments_file.as_posix(),
+        "KANAMI_TEST_JOURNAL_EXIT_CODE": str(journalctl_exit_code),
+    }
+    return test_manager, environment, arguments_file
+
+
 def create_checkout(tmp_path: Path) -> Path:
     checkout = tmp_path / "checkout"
     checkout.mkdir()
@@ -186,6 +224,7 @@ def test_help_aliases_show_the_same_help(argument: str) -> None:
     assert result.stdout == default_result.stdout
     assert "status" in result.stdout
     assert "doctor" in result.stdout
+    assert "logs       Show recent Kanami bot logs" in result.stdout
     assert "restart" in result.stdout
     assert "menu" in result.stdout
     assert result.stderr == ""
@@ -211,8 +250,9 @@ def test_menu_preserves_read_only_options_adds_restart_and_exits() -> None:
     assert "3. Version" in result.stdout
     assert "4. Help" in result.stdout
     assert "5. Restart bot" in result.stdout
+    assert "6. Logs" in result.stdout
     assert "0. Exit" in result.stdout
-    assert "Select an option [0-5]:" in result.stdout
+    assert "Select an option [0-6]:" in result.stdout
     assert "Install" not in result.stdout
     assert "Update" not in result.stdout
     assert "Backup" not in result.stdout
@@ -272,7 +312,7 @@ def test_menu_invalid_choice_returns_to_menu() -> None:
     result = run_manager("menu", input_text="invalid\n0\n")
 
     assert result.returncode == 0
-    assert "Invalid choice: invalid. Select a number from 0 to 5." in result.stdout
+    assert "Invalid choice: invalid. Select a number from 0 to 6." in result.stdout
     assert result.stdout.count("1. Status") == 2
     assert "Goodbye." in result.stdout
 
@@ -362,6 +402,136 @@ def test_menu_restart_only_runs_after_explicit_positive_confirmation() -> None:
     confirmation = menu_source.index("if confirm_restart; then")
     guarded_restart = menu_source.index("if ! restart_bot; then")
     assert confirmation < guarded_restart
+
+
+def test_logs_uses_fixed_production_boundary_and_bot_only() -> None:
+    source = MANAGER_SCRIPT.read_text(encoding="utf-8")
+    logs_source = shell_function_source("show_logs")
+
+    assert 'readonly JOURNALCTL="/usr/bin/journalctl"' in source
+    assert "KANAMI_MANAGER_JOURNALCTL" not in source
+    assert 'JOURNALCTL="${' not in source
+    assert 'readonly BOT_SERVICE="kanami.service"' in source
+    assert '"${JOURNALCTL}" -u "${BOT_SERVICE}"' in logs_source
+    assert "kanami-web-admin.service" not in logs_source
+
+
+def test_logs_defaults_to_100_lines_without_pager(tmp_path: Path) -> None:
+    manager, environment, arguments_file = create_logs_test_manager(tmp_path)
+
+    result = run_manager("logs", environment=environment, script=manager)
+
+    assert result.returncode == 0
+    assert result.stdout == "fake journal line\n"
+    assert result.stderr == ""
+    assert arguments_file.read_text(encoding="utf-8").splitlines() == [
+        "-u",
+        "kanami.service",
+        "-n",
+        "100",
+        "--no-pager",
+    ]
+
+
+@pytest.mark.parametrize("lines", ["1", "50", "1000"])
+def test_logs_accepts_valid_line_limits(tmp_path: Path, lines: str) -> None:
+    manager, environment, arguments_file = create_logs_test_manager(tmp_path)
+
+    result = run_manager(
+        "logs",
+        "--lines",
+        lines,
+        environment=environment,
+        script=manager,
+    )
+
+    assert result.returncode == 0
+    arguments = arguments_file.read_text(encoding="utf-8").splitlines()
+    assert arguments == ["-u", "kanami.service", "-n", lines, "--no-pager"]
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ("--lines", "0"),
+        ("--lines", "1001"),
+        ("--lines", "999999999999999999999999"),
+        ("--lines", "abc"),
+        ("--lines",),
+        ("unexpected",),
+        ("some.service",),
+        ("--lines", "50", "unexpected"),
+        ("--follow",),
+        ("-f",),
+    ],
+)
+def test_logs_rejects_invalid_or_unsupported_arguments(
+    arguments: tuple[str, ...],
+) -> None:
+    result = run_manager("logs", *arguments)
+
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert "Usage: kanami logs [--lines N]" in result.stderr
+
+
+def test_logs_propagates_journalctl_exit_code(tmp_path: Path) -> None:
+    manager, environment, _ = create_logs_test_manager(
+        tmp_path,
+        journalctl_exit_code=7,
+    )
+
+    result = run_manager("logs", environment=environment, script=manager)
+
+    assert result.returncode == 7
+    assert "fake journal line" in result.stdout
+
+
+def test_menu_logs_failure_returns_to_menu(tmp_path: Path) -> None:
+    manager, environment, arguments_file = create_logs_test_manager(
+        tmp_path,
+        journalctl_exit_code=7,
+    )
+
+    result = run_manager(
+        "menu",
+        environment=environment,
+        input_text="6\n0\n",
+        script=manager,
+    )
+
+    assert result.returncode == 0
+    assert arguments_file.read_text(encoding="utf-8").splitlines() == [
+        "-u",
+        "kanami.service",
+        "-n",
+        "100",
+        "--no-pager",
+    ]
+    assert "Unable to show logs." in result.stderr
+    assert result.stdout.count("1. Status") == 2
+    assert "Goodbye." in result.stdout
+
+
+def test_logs_does_not_escalate_or_access_other_subsystems() -> None:
+    logs_source = shell_function_source("show_logs")
+
+    assert "eval" not in logs_source
+    assert not re.search(r"^\s*(?:sudo|su)\b", logs_source, re.MULTILINE)
+    for forbidden in (
+        "CONFIG_FILE",
+        "kanami.env",
+        "DISCORD_TOKEN",
+        "DATABASE_URL",
+        "git ",
+        "uv ",
+        "alembic",
+        "systemctl",
+        "restart",
+        "start",
+        "stop",
+    ):
+        assert forbidden not in logs_source
 
 
 def test_restart_validates_unit_and_post_restart_active_state() -> None:

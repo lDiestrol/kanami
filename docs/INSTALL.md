@@ -49,18 +49,29 @@ kanami help
 kanami version
 kanami status
 kanami doctor
+kanami logs
+kanami logs --lines 50
 sudo kanami restart
 kanami menu
 ```
 
 Для разработки те же команды можно запускать как `bash ./scripts/manager.sh ...`.
-Команды `help`, `version`, `status` и `doctor` остаются read-only и не требуют
-root. `status` показывает короткую сводку checkout и systemd services, а
-`doctor` проверяет foundation установки и возвращает ненулевой exit code при
-обязательных ошибках. Отдельный Web Admin остаётся optional: его отсутствие или
-inactive-state не делают основную bot installation нездоровой. Недоступные без
-root проверки systemd показываются как `WARN`/`SKIP`, а не считаются
-подтверждённой поломкой.
+Команды `help`, `version`, `status`, `doctor` и `logs` остаются read-only и не
+требуют root со стороны Manager. `status` показывает короткую сводку checkout и
+systemd services, а `doctor` проверяет foundation установки и возвращает
+ненулевой exit code при обязательных ошибках. Отдельный Web Admin остаётся
+optional: его отсутствие или inactive-state не делают основную bot installation
+нездоровой. Недоступные без root проверки systemd показываются как
+`WARN`/`SKIP`, а не считаются подтверждённой поломкой.
+
+`kanami logs` через фиксированный `/usr/bin/journalctl` показывает последние 100
+записей только `kanami.service` и всегда отключает pager. Число записей можно
+задать как `kanami logs --lines N`, где `N` находится в диапазоне 1..1000.
+Фактический доступ зависит от system journal permissions: Manager не запускает
+`sudo` и возвращает ошибку journalctl вызывающему shell. Вывод является raw
+application/system journal output; перед публикацией в issue или chat его нужно
+проверить на чувствительные данные. Follow mode и Web Admin logs пока не
+поддерживаются.
 
 Первая lifecycle-команда `sudo kanami restart` перезапускает только обязательный
 `kanami.service`, проверяет его LoadState и active-state после restart. Manager
@@ -71,7 +82,9 @@ root проверки systemd показываются как `WARN`/`SKIP`, а 
 При запуске `kanami` без аргументов интерактивное меню открывается только когда
 stdin и stdout являются TTY. В pipeline, cron и CI manager показывает help и не
 ожидает input. Явная команда `kanami menu` сохраняет пункты 1–4 для Status,
-Doctor, Version и Help, добавляет `5. Restart bot` и оставляет `0. Exit`.
+Doctor, Version и Help, оставляет `5. Restart bot`, добавляет `6. Logs` и
+сохраняет `0. Exit`. Logs в menu использует default 100 и после завершения или
+ошибки возвращает пользователя в menu без confirmation.
 Menu restart требует отдельного подтверждения: `y`, `Y`, `yes` или `YES`
 подтверждают restart; пустой ввод, любой другой ответ и EOF отменяют действие.
 Ошибка restart показывается без аварийного закрытия menu.

@@ -68,6 +68,12 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что уже выполнено
 
+- D2.6: добавлен read-only `kanami logs` только для journal основного
+  `kanami.service`: фиксированный `/usr/bin/journalctl`, default 100 записей,
+  validated `--lines N` 1..1000 и обязательный `--no-pager`. Команда не требует
+  root со стороны Manager и передаёт journalctl exit code прямому caller. Menu
+  добавляет `6. Logs` без confirmation и не закрывается при failure. Follow,
+  Web Admin logs, arbitrary units, auto-sudo и binary env override отсутствуют.
 - D2.5: добавлена первая lifecycle-команда `kanami restart`. Она требует root,
   использует фиксированный `/usr/bin/systemctl`, проверяет `LoadState=loaded`,
   перезапускает только обязательный `kanami.service` и подтверждает успех лишь
@@ -994,10 +1000,10 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что сейчас делается
 
-D2.5 подготовлен как отдельный маленький checkpoint первой mutating-команды
-Manager: controlled restart только основного `kanami.service`. Остальные
-lifecycle actions, rollback, PostgreSQL/Alembic/HTTP doctor probes и
-backup/restore в текущий scope не входят.
+D2.6 подготовлен как отдельный checkpoint безопасного read-only просмотра
+последних записей journal только основного `kanami.service`. Follow mode, Web
+Admin logs, остальные lifecycle actions, rollback, PostgreSQL/Alembic/HTTP
+doctor probes и backup/restore в текущий scope не входят.
 
 WUI-4A.1 и оба responsive hotfix развёрнуты в production. Первый hotfix исправил
 расположение compact-кнопки «Профиль» справа в member row на tablet width. Второй
@@ -1273,8 +1279,11 @@ automation, settings/env, migrations и intents для `/health` не добав
 - Production пути: `/opt/kanami` для checkout, `/etc/kanami/kanami.env` для secrets/config; service работает как system user `kanami`.
 - Kanami Manager развивается как отдельный Bash entrypoint, пригодный для
   установки в `/usr/local/bin/kanami`. Read-only команды
-  status/doctor/version/help не требуют root; D2.5 добавляет только root-only
-  restart основного `kanami.service` через фиксированный `/usr/bin/systemctl` и
+  status/doctor/version/help/logs не требуют root со стороны Manager; D2.5
+  добавляет только root-only restart основного `kanami.service` через
+  фиксированный `/usr/bin/systemctl`. D2.6 читает только его raw journal через
+  фиксированный `/usr/bin/journalctl`, отключает pager и валидирует bounded
+  `--lines`; фактический доступ остаётся под system journal permissions. Manager
   не объявляет release version до появления version lifecycle.
   Doctor считает основной bot deployment обязательным, а отдельный Web Admin —
   optional; hermetic tests подменяют read-only manager paths и `PATH`. Installer
@@ -1334,9 +1343,10 @@ automation, settings/env, migrations и intents для `/health` не добав
 
 ## Следующие шаги
 
-1. Продолжить D2.6+ отдельными небольшими lifecycle checkpoint-этапами.
-   Start/stop/update/install, Web Admin restart, backup/restore/rollback и
-   PostgreSQL/Alembic/HTTP doctor probes не входят в D2.5.
+1. Продолжить D2.7+ отдельными небольшими manager checkpoint-этапами.
+   Follow/Web Admin logs, start/stop/update/install, Web Admin restart,
+   backup/restore/rollback и PostgreSQL/Alembic/HTTP doctor probes не входят в
+   D2.6.
 2. При следующем реальном этапе Rules Compliance / reacceptance проверить
    оставшийся production scenario: Publish новой Rules version → успешный DB
    commit → automatic Bot Control sync → обновление существующего managed message

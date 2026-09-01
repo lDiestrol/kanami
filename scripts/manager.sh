@@ -5,6 +5,9 @@ readonly PROGRAM_NAME="kanami"
 readonly MANAGER_NAME="Kanami Manager"
 readonly MUTATING_SYSTEMCTL="/usr/bin/systemctl"
 readonly BOT_SERVICE="kanami.service"
+readonly JOURNALCTL="/usr/bin/journalctl"
+readonly DEFAULT_LOG_LINES=100
+readonly MAX_LOG_LINES=1000
 # D2.2 read-only test seams; future mutating commands must not trust these paths.
 readonly INSTALL_DIR="${KANAMI_MANAGER_INSTALL_DIR:-/opt/kanami}"
 readonly UV_BOOTSTRAP_DIR="${KANAMI_MANAGER_UV_BOOTSTRAP_DIR:-/opt/kanami-uv}"
@@ -23,8 +26,11 @@ Commands:
   version    Show manager version information
   status     Show a short read-only installation summary
   doctor     Run detailed read-only installation diagnostics
+  logs       Show recent Kanami bot logs
   restart    Restart the main Kanami bot service
   menu       Open the interactive menu
+
+Logs usage: kanami logs [--lines N]
 EOF
 }
 
@@ -37,6 +43,7 @@ Kanami Manager
 3. Version
 4. Help
 5. Restart bot
+6. Logs
 0. Exit
 EOF
 }
@@ -66,7 +73,7 @@ show_menu() {
 
     while true; do
         show_menu_options
-        printf 'Select an option [0-5]: '
+        printf 'Select an option [0-6]: '
         if ! IFS= read -r choice; then
             printf '\nEnd of input; exiting.\n'
             return 0
@@ -93,12 +100,17 @@ show_menu() {
                     fi
                 fi
                 ;;
+            6)
+                if ! show_logs; then
+                    printf 'Unable to show logs.\n' >&2
+                fi
+                ;;
             0)
                 printf 'Goodbye.\n'
                 return 0
                 ;;
             *)
-                printf 'Invalid choice: %s. Select a number from 0 to 5.\n' \
+                printf 'Invalid choice: %s. Select a number from 0 to 6.\n' \
                     "${choice}"
                 ;;
         esac
@@ -204,6 +216,50 @@ unit_active_state() {
             return 1
             ;;
     esac
+}
+
+logs_usage_error() {
+    printf '%s: %s\n' "${PROGRAM_NAME}" "$1" >&2
+    printf 'Usage: %s logs [--lines N]\n' "${PROGRAM_NAME}" >&2
+    return 2
+}
+
+show_logs() {
+    local lines="${DEFAULT_LOG_LINES}"
+
+    if (($# > 0)); then
+        if [[ $1 != "--lines" ]]; then
+            logs_usage_error "unexpected logs argument: $1"
+            return 2
+        fi
+        if (($# < 2)); then
+            logs_usage_error "--lines requires a value"
+            return 2
+        fi
+        if (($# > 2)); then
+            logs_usage_error "unexpected logs argument: $3"
+            return 2
+        fi
+        lines="$2"
+    fi
+
+    if [[ ! ${lines} =~ ^[0-9]+$ ]]; then
+        logs_usage_error "--lines must be an integer from 1 to ${MAX_LOG_LINES}"
+        return 2
+    fi
+    if ((${#lines} > 4)) || \
+        ((10#${lines} < 1 || 10#${lines} > MAX_LOG_LINES)); then
+        logs_usage_error "--lines must be between 1 and ${MAX_LOG_LINES}"
+        return 2
+    fi
+    lines="$((10#${lines}))"
+    if [[ ! -x ${JOURNALCTL} ]]; then
+        printf '%s: cannot show logs: %s is unavailable\n' \
+            "${PROGRAM_NAME}" "${JOURNALCTL}" >&2
+        return 1
+    fi
+
+    "${JOURNALCTL}" -u "${BOT_SERVICE}" -n "${lines}" --no-pager
 }
 
 restart_bot() {
@@ -559,6 +615,10 @@ main() {
             ;;
         doctor)
             show_doctor
+            ;;
+        logs)
+            shift
+            show_logs "$@"
             ;;
         restart)
             restart_bot

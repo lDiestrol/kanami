@@ -1327,9 +1327,18 @@ reacceptance workflow намеренно отложены.
   лишь после `is-active --quiet`. Manager не выполняет auto-sudo и не использует
   read-only path overrides или PATH как authority для mutation. Optional
   `kanami-web-admin.service` не входит в restart semantics.
+- D2.6 добавляет read-only `logs` только для `kanami.service`. Manager вызывает
+  фиксированный `/usr/bin/journalctl` с `--no-pager`, по умолчанию запрашивает
+  последние 100 записей и принимает только локально проверенный `--lines N` в
+  диапазоне 1..1000. Произвольный unit, environment override binary, auto-sudo,
+  follow mode и Web Admin logs отсутствуют. Exit code journalctl передаётся
+  прямому CLI caller; доступ определяется внешней system journal policy. Manager
+  не редактирует raw journal output и не создаёт ложной гарантии redaction.
 - Menu остаётся presentation loop: пункты 1–4 вызывают существующие read-only
   status/doctor/version/help functions, `0` завершает menu, а новый пункт
-  `5. Restart bot` требует отдельного positive confirmation. Отмена и EOF не
+  `5. Restart bot` требует отдельного positive confirmation. Пункт `6. Logs`
+  вызывает default read-only просмотр 100 записей без confirmation и возвращает
+  пользователя в menu также после journalctl failure. Отмена restart и EOF не
   меняют service; ошибка restart возвращает пользователя в menu. Прямой
   `sudo kanami restart` считается явным намерением и confirmation не требует.
   Неявный запуск menu требует TTY на stdin и stdout; non-TTY запуск без аргументов
