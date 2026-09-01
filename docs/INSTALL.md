@@ -38,6 +38,21 @@ VM, `systemd` и локальный PostgreSQL. Предполагаются б�
 states и guild messages. Он не включает message content, typing или DM intents;
 presences включаются только через `GAME_TRACKING_ENABLED=true`.
 
+## Kanami Manager foundation
+
+В repository появился foundation будущей управляющей команды `kanami`:
+
+```bash
+bash ./scripts/manager.sh help
+bash ./scripts/manager.sh version
+```
+
+На этом этапе manager работает только в read-only режиме: запуск без аргументов
+показывает справку, а из команд реализованы только `help` и `version`. Установка
+как `/usr/local/bin/kanami`, интерактивное меню и lifecycle-команды появятся в
+последующих этапах; текущие install/update scripts остаются основным deployment
+flow.
+
 ## Автоматизированная установка
 
 Клонируйте repository обычным пользователем и изучите script перед запуском:

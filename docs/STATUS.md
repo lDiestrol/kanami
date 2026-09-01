@@ -40,9 +40,11 @@ Server Settings UI объединён с `main`, развёрнут на product
 production-validated. Stage 6B.3 UX/audit polish объединён с `main`, развёрнут
 на production-host и production-validated. Подготовлены
 человекочитаемая русская документация и первый официальный deployment flow для
-Debian 13 + systemd + локальный PostgreSQL. Achievements доступны пользователям
-через guild-only `/achievements` с актуализацией voice/community метрик и
-идемпотентной выдачей. Pagination не реализована.
+Debian 13 + systemd + локальный PostgreSQL. Начат D2 — Installation & Lifecycle
+v2: D2.1 добавляет read-only foundation будущего Kanami Manager с командами
+`help` и `version`, без изменения текущего install/update flow. Achievements
+доступны пользователям через guild-only `/achievements` с актуализацией
+voice/community метрик и идемпотентной выдачей. Pagination не реализована.
 
 Текущее подтверждённое production-состояние работает на commit `1e73c8a`:
 PostgreSQL Alembic `current = heads = d4e8a1c7b962`,
@@ -63,6 +65,12 @@ G3B Server Game Analytics объединён с `main` в commit
 smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что уже выполнено
+
+- D2.1: добавлен автономный Bash entrypoint `scripts/manager.sh` с
+  `set -Eeuo pipefail`, предсказуемыми `help`/`-h`/`--help`, безопасным
+  `version` без фиктивного semver и ненулевым exit code для неизвестной команды.
+  Linux/Bash pytest-покрытие явно пропускается на Windows; installer, updater и
+  CI workflow не изменялись.
 
 - Реализован G3A Member Game Analytics без нового route, migration и изменений
   Game Tracking collection: отдельный Web Admin service выполняет один
@@ -957,6 +965,10 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что сейчас делается
 
+D2 — Installation & Lifecycle v2 начат с небольшого checkpoint D2.1. Текущий
+scope ограничен фундаментом Kanami Manager; lifecycle-команды и интерактивный
+интерфейс остаются последующей работой.
+
 WUI-4A.1 и оба responsive hotfix развёрнуты в production. Первый hotfix исправил
 расположение compact-кнопки «Профиль» справа в member row на tablet width. Второй
 hotfix `fix/web-nav-900-compact-menu` объединён с `main` в commit `c7781e0`, и
@@ -1229,6 +1241,9 @@ automation, settings/env, migrations и intents для `/health` не добав
 - Стандартный Python `logging` пишет в stdout/stderr и не раскрывает секреты.
 - Ruff используется как linter и formatter; async-тесты используют pytest-asyncio и временный PostgreSQL для DB integration tests.
 - Production пути: `/opt/kanami` для checkout, `/etc/kanami/kanami.env` для secrets/config; service работает как system user `kanami`.
+- Kanami Manager развивается как отдельный Bash entrypoint, пригодный для
+  будущей установки в `/usr/local/bin/kanami`; D2.1 остаётся read-only, не
+  требует root и не объявляет release version до появления version lifecycle.
 - Миграции выполняются отдельной командой; приложение не запускает Alembic автоматически.
 - Lifecycle имеет единую точку запуска, graceful shutdown и централизованное управление background tasks.
 - Штатный SIGINT завершается успешно только после async cleanup Discord client/background tasks и database engine; entrypoint подавляет соответствующий `KeyboardInterrupt`, но не произвольную cancellation или runtime exceptions.
@@ -1283,18 +1298,20 @@ automation, settings/env, migrations и intents для `/health` не добав
 
 ## Следующие шаги
 
-1. При следующем реальном этапе Rules Compliance / reacceptance проверить
+1. Продолжить D2 после отдельного проектирования следующих checkpoint: установка
+   manager entrypoint, lifecycle-команды и интерактивное меню не входят в D2.1.
+2. При следующем реальном этапе Rules Compliance / reacceptance проверить
    оставшийся production scenario: Publish новой Rules version → успешный DB
    commit → automatic Bot Control sync → обновление существующего managed message
    с сохранением message ID и отображением новой версии. Reminders, enforcement
    и forced reacceptance пока не реализованы и остаются future work.
-2. Следующим audit-этапом отдельно спроектировать actor enrichment и `/history`,
+3. Следующим audit-этапом отдельно спроектировать actor enrichment и `/history`,
    не смешивая их с текущим ingestion.
-3. Отдельно спроектировать дедупликацию/коррекцию message events,
+4. Отдельно спроектировать дедупликацию/коррекцию message events,
    opt-out/data deletion, text channel analytics и pagination.
-4. После проверки Debian install/update flow определить backup и полноценный
+5. После проверки Debian install/update flow определить backup и полноценный
    production health monitoring.
-5. Для production migration с локального Caddy на отдельную Nginx VM: подготовить
+6. Для production migration с локального Caddy на отдельную Nginx VM: подготовить
    DNS/TLS и remote Nginx config, создать отдельный web env/user/unit, задать
    конкретный private `WEB_ADMIN_HOST` + opt-in, разрешить TCP/8000 только с IP
    proxy VM, сохранить 8765/5432 loopback-only, затем выполнить OAuth и все четыре

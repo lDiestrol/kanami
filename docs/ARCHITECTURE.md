@@ -1296,6 +1296,12 @@ reacceptance workflow намеренно отложены.
 - Update выполняется только из чистого Git tree через `git pull --ff-only`,
   locked dependency sync и migration до restart. Forced checkout/reset и
   автоматическое удаление данных не используются.
+- Foundation будущего Kanami Manager — автономный Bash entrypoint
+  `scripts/manager.sh`, рассчитанный на последующую установку как
+  `/usr/local/bin/kanami`. На этапе D2.1 он не требует root, не читает
+  environment-файлы и поддерживает только read-only команды `help` и `version`;
+  version не вводит фиктивный semver и opportunistically показывает commit
+  только из известного Git checkout.
 - Секреты не хранятся в Git.
 - Web-панель в MVP отсутствует.
 
