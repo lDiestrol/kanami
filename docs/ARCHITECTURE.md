@@ -1324,6 +1324,17 @@ reacceptance workflow намеренно отложены.
   privileged execution, тогда как более широкий recursive invariant D2.8 внутри
   trusted updater остаётся defense-in-depth. Read-only path seams и PATH не
   являются authority для update; auto-sudo и repair отсутствуют.
+- D2.10 расширяет read-only doctor отдельной canonical production trust
+  диагностикой, не меняя D2.9 execution path. Fixed `/usr/bin/stat` проверяет
+  тип, отсутствие symlink, numeric UID/GID 0 и отсутствие group/other write для
+  checkout, `.git`, scripts, updater, Manager source и unit source. `.venv`
+  проверяется отдельно как разрешённое `kanami:kanami` owner-writable exception
+  с executable bot entrypoint. Fixed bash/stat и все anchors обязательны:
+  readiness становится `READY` только при полностью подтверждённом invariant;
+  иначе doctor возвращает `UNHEALTHY`/`NOT READY`. Это metadata-only диагностика
+  без root, secrets, recursive scan, updater invocation или repair. Legacy
+  writable checkout по-прежнему требует manual trust restoration из trusted
+  source.
 - Foundation будущего Kanami Manager — автономный Bash entrypoint
   `scripts/manager.sh`, рассчитанный на последующую установку как
   `/usr/local/bin/kanami`. D2.1 добавил `help`/`version`, а D2.2 — read-only

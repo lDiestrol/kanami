@@ -69,6 +69,13 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что уже выполнено
 
+- D2.10: `kanami doctor` получил отдельный read-only Production trust section и
+  итог `Update readiness`. Проверяются canonical checkout, `.git`, scripts,
+  updater, Manager/unit sources, fixed bash/stat и service-owned `.venv` с bot
+  executable. Root anchors требуют UID/GID 0, non-symlink и отсутствие
+  group/other write; `.venv` остаётся явным `kanami:kanami` owner-writable
+  исключением. Неподтверждённая metadata, legacy ownership или нарушение
+  boundary дают `NOT READY`, `UNHEALTHY` и non-zero без auto-sudo или repair.
 - D2.9: добавлен root-only `sudo kanami update` как thin wrapper над canonical
   `/opt/kanami/scripts/update.sh`. До запуска Manager fixed `stat` проверяет
   checkout/scripts/updater bootstrap chain: ожидаемые типы, отсутствие symlink,
@@ -1027,12 +1034,12 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что сейчас делается
 
-D2.9 готовится как отдельный checkpoint trusted `kanami update`: Manager
-проверяет bootstrap trust до запуска и делегирует неизменённый workflow
-canonical updater-у. Legacy ownership migration, rollback, backup/restore и
-остальные lifecycle функции в текущий scope не входят. До восстановления D2.8
-trust boundary старый service-user-writable checkout-local `update.sh` по-прежнему
-не должен запускаться через `sudo`.
+D2.10 готовится как отдельный read-only diagnostics checkpoint: doctor проверяет
+canonical production trust anchors и update readiness до попытки update. D2.9
+workflow, legacy ownership migration, rollback, backup/restore и остальные
+lifecycle функции не меняются. Старый service-user-writable checkout-local
+`update.sh` по-прежнему нельзя запускать через `sudo` до manual trust
+restoration.
 
 WUI-4A.1 и оба responsive hotfix развёрнуты в production. Первый hotfix исправил
 расположение compact-кнопки «Профиль» справа в member row на tablet width. Второй
@@ -1337,6 +1344,11 @@ automation, settings/env, migrations и intents для `/health` не добав
   запускает его fixed `/usr/bin/bash`; trusted updater затем сам проверяет весь
   checkout и выполняет canonical workflow. Direct exit code не маскируется, а
   menu после invocation завершается из-за возможного Manager self-refresh.
+- D2.10 позволяет заранее проверить ту же security foundation через обычный
+  `kanami doctor`: ключевые root-owned anchors и `.venv` exception проверяются
+  read-only fixed stat, а readiness не объявляется при unknown или нарушенной
+  metadata. Doctor не выполняет updater, recursive scan или ownership repair;
+  D2.9 observable update semantics не меняются.
 - Миграции выполняются отдельной командой; приложение не запускает Alembic автоматически.
 - Lifecycle имеет единую точку запуска, graceful shutdown и централизованное управление background tasks.
 - Штатный SIGINT завершается успешно только после async cleanup Discord client/background tasks и database engine; entrypoint подавляет соответствующий `KeyboardInterrupt`, но не произвольную cancellation или runtime exceptions.
@@ -1391,11 +1403,11 @@ automation, settings/env, migrations и intents для `/health` не добав
 
 ## Следующие шаги
 
-1. Продолжить D2.10+ отдельными небольшими manager checkpoint-этапами без
+1. Продолжить D2.11+ отдельными небольшими manager checkpoint-этапами без
    преждевременного проектирования следующей mutating команды.
    Follow/Web Admin logs, install, Web Admin lifecycle, enable/disable,
    backup/restore/rollback и PostgreSQL/Alembic/HTTP doctor probes не входят в
-   D2.9.
+   D2.10.
 2. При следующем реальном этапе Rules Compliance / reacceptance проверить
    оставшийся production scenario: Publish новой Rules version → успешный DB
    commit → automatic Bot Control sync → обновление существующего managed message

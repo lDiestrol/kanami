@@ -67,6 +67,17 @@ optional: его отсутствие или inactive-state не делают о
 нездоровой. Недоступные без root проверки systemd показываются как
 `WARN`/`SKIP`, а не считаются подтверждённой поломкой.
 
+D2.10 добавляет в `kanami doctor` отдельный read-only раздел Production trust.
+Он проверяет canonical `/opt/kanami`, `.git`, `scripts`, updater, Manager source,
+systemd unit source, `.venv`, bot executable и fixed `/usr/bin/bash`/`stat`.
+Root-owned anchors должны иметь UID/GID 0, не быть symlink или group/other
+writable. `.venv` остаётся намеренным исключением: `kanami:kanami`, owner-writable
+и с executable bot entrypoint. Только полностью подтверждённая boundary даёт
+`Update readiness: READY`; любое обязательное нарушение делает doctor
+`UNHEALTHY`. Doctor не требует root, не читает secrets и ничего не repair-ит.
+Legacy writable checkout требует manual review/migration/reinstall из trusted
+source до privileged update.
+
 `kanami logs` через фиксированный `/usr/bin/journalctl` показывает последние 100
 записей только `kanami.service` и всегда отключает pager. Число записей можно
 задать как `kanami logs --lines N`, где `N` находится в диапазоне 1..1000.

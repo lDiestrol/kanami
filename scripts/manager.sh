@@ -13,12 +13,18 @@ readonly UPDATE_SCRIPTS_DIR="/opt/kanami/scripts"
 readonly UPDATE_SCRIPT="/opt/kanami/scripts/update.sh"
 readonly UPDATE_BASH="/usr/bin/bash"
 readonly UPDATE_STAT="/usr/bin/stat"
+readonly PRODUCTION_GIT_DIR="${UPDATE_CHECKOUT}/.git"
+readonly PRODUCTION_MANAGER_SOURCE="${UPDATE_SCRIPTS_DIR}/manager.sh"
+readonly PRODUCTION_SERVICE_UNIT="${UPDATE_CHECKOUT}/deploy/kanami.service"
+readonly PRODUCTION_VENV="${UPDATE_CHECKOUT}/.venv"
+readonly PRODUCTION_BOT_EXECUTABLE="${PRODUCTION_VENV}/bin/discord-stats-bot"
 # D2.2 read-only test seams; future mutating commands must not trust these paths.
 readonly INSTALL_DIR="${KANAMI_MANAGER_INSTALL_DIR:-/opt/kanami}"
 readonly UV_BOOTSTRAP_DIR="${KANAMI_MANAGER_UV_BOOTSTRAP_DIR:-/opt/kanami-uv}"
 readonly UV_CACHE_DIR="${KANAMI_MANAGER_UV_CACHE_DIR:-/var/cache/kanami/uv}"
 
 DOCTOR_FAILURES=0
+DOCTOR_UPDATE_FAILURES=0
 UPDATE_INVOKED=0
 
 show_help() {
@@ -758,6 +764,200 @@ doctor_check_directory() {
     fi
 }
 
+doctor_trust_result() {
+    local level="$1"
+    local check="$2"
+    local detail="$3"
+
+    doctor_result "${level}" "${check}" "${detail}"
+    if [[ ${level} == "FAIL" ]]; then
+        DOCTOR_UPDATE_FAILURES=$((DOCTOR_UPDATE_FAILURES + 1))
+    fi
+}
+
+doctor_check_trusted_directory() {
+    local path="$1"
+    local check="$2"
+    local metadata
+    local uid
+    local gid
+    local mode
+    local extra
+
+    if [[ -L ${path} ]]; then
+        doctor_trust_result FAIL "${check}" "must not be a symlink: ${path}"
+        return 1
+    fi
+    if [[ ! -d ${path} ]]; then
+        doctor_trust_result FAIL "${check}" \
+            "missing or not a directory: ${path}"
+        return 1
+    fi
+    if [[ ! -x ${UPDATE_STAT} ]]; then
+        doctor_trust_result FAIL "${check}" \
+            "ownership unavailable: ${UPDATE_STAT} is unavailable"
+        return 1
+    fi
+    metadata="$("${UPDATE_STAT}" --format='%u %g %a' -- "${path}" \
+        2>/dev/null)" || {
+        doctor_trust_result FAIL "${check}" \
+            "could not inspect ownership at ${path}"
+        return 1
+    }
+    IFS=' ' read -r uid gid mode extra <<< "${metadata}"
+    if [[ ! ${uid} =~ ^[0-9]+$ || ! ${gid} =~ ^[0-9]+$ || \
+        ! ${mode} =~ ^[0-7]{3,4}$ || -n ${extra} ]]; then
+        doctor_trust_result FAIL "${check}" "invalid ownership metadata"
+        return 1
+    fi
+    if [[ ${uid} != "0" || ${gid} != "0" ]]; then
+        doctor_trust_result FAIL "${check}" \
+            "non-canonical ownership UID ${uid} GID ${gid}; privileged update must not run; manual review/migration/reinstall from trusted source required"
+        return 1
+    fi
+    if (((8#${mode} & 8#022) != 0)); then
+        doctor_trust_result FAIL "${check}" \
+            "group/other writable (mode ${mode}); privileged update must not run until trust is restored"
+        return 1
+    fi
+    doctor_trust_result OK "${check}" "trusted root-owned directory (mode ${mode})"
+}
+
+doctor_check_trusted_file() {
+    local path="$1"
+    local check="$2"
+    local metadata
+    local uid
+    local gid
+    local mode
+    local extra
+
+    if [[ -L ${path} ]]; then
+        doctor_trust_result FAIL "${check}" "must not be a symlink: ${path}"
+        return 1
+    fi
+    if [[ ! -f ${path} || ! -r ${path} ]]; then
+        doctor_trust_result FAIL "${check}" \
+            "missing or not a readable regular file: ${path}"
+        return 1
+    fi
+    if [[ ! -x ${UPDATE_STAT} ]]; then
+        doctor_trust_result FAIL "${check}" \
+            "ownership unavailable: ${UPDATE_STAT} is unavailable"
+        return 1
+    fi
+    metadata="$("${UPDATE_STAT}" --format='%u %g %a' -- "${path}" \
+        2>/dev/null)" || {
+        doctor_trust_result FAIL "${check}" \
+            "could not inspect ownership at ${path}"
+        return 1
+    }
+    IFS=' ' read -r uid gid mode extra <<< "${metadata}"
+    if [[ ! ${uid} =~ ^[0-9]+$ || ! ${gid} =~ ^[0-9]+$ || \
+        ! ${mode} =~ ^[0-7]{3,4}$ || -n ${extra} ]]; then
+        doctor_trust_result FAIL "${check}" "invalid ownership metadata"
+        return 1
+    fi
+    if [[ ${uid} != "0" || ${gid} != "0" ]]; then
+        doctor_trust_result FAIL "${check}" \
+            "non-canonical ownership UID ${uid} GID ${gid}; privileged update must not run; manual review/migration/reinstall from trusted source required"
+        return 1
+    fi
+    if (((8#${mode} & 8#022) != 0)); then
+        doctor_trust_result FAIL "${check}" \
+            "group/other writable (mode ${mode}); privileged update must not run until trust is restored"
+        return 1
+    fi
+    doctor_trust_result OK "${check}" "trusted root-owned file (mode ${mode})"
+}
+
+doctor_check_production_venv() {
+    local metadata
+    local owner
+    local group
+    local mode
+    local extra
+
+    if [[ -L ${PRODUCTION_VENV} ]]; then
+        doctor_trust_result FAIL "Production project venv" \
+            "writable exception must not be a symlink: ${PRODUCTION_VENV}"
+        return 1
+    fi
+    if [[ ! -d ${PRODUCTION_VENV} ]]; then
+        doctor_trust_result FAIL "Production project venv" \
+            "writable exception is missing or not a directory: ${PRODUCTION_VENV}"
+        return 1
+    fi
+    if [[ ! -x ${UPDATE_STAT} ]]; then
+        doctor_trust_result FAIL "Production project venv" \
+            "ownership unavailable: ${UPDATE_STAT} is unavailable"
+        return 1
+    fi
+    metadata="$("${UPDATE_STAT}" --format='%U %G %a' -- \
+        "${PRODUCTION_VENV}" 2>/dev/null)" || {
+        doctor_trust_result FAIL "Production project venv" \
+            "could not inspect writable exception ownership"
+        return 1
+    }
+    IFS=' ' read -r owner group mode extra <<< "${metadata}"
+    if [[ ${owner} != "kanami" || ${group} != "kanami" || \
+        ! ${mode} =~ ^[0-7]{3,4}$ || -n ${extra} ]]; then
+        doctor_trust_result FAIL "Production project venv" \
+            "expected kanami:kanami writable exception, got ${owner:-unknown}:${group:-unknown} mode ${mode:-unknown}"
+        return 1
+    fi
+    if (((8#${mode} & 8#200) == 0)); then
+        doctor_trust_result FAIL "Production project venv" \
+            "owner kanami lacks write permission (mode ${mode})"
+        return 1
+    fi
+    doctor_trust_result OK "Production project venv" \
+        "allowed kanami:kanami writable exception (mode ${mode})"
+}
+
+doctor_check_production_trust() {
+    DOCTOR_UPDATE_FAILURES=0
+    printf 'Production trust:\n'
+
+    if [[ -x ${UPDATE_BASH} ]]; then
+        doctor_trust_result OK "Production bash" "available at ${UPDATE_BASH}"
+    else
+        doctor_trust_result FAIL "Production bash" "unavailable at ${UPDATE_BASH}"
+    fi
+    if [[ -x ${UPDATE_STAT} ]]; then
+        doctor_trust_result OK "Production stat" "available at ${UPDATE_STAT}"
+    else
+        doctor_trust_result FAIL "Production stat" "unavailable at ${UPDATE_STAT}"
+    fi
+
+    doctor_check_trusted_directory "${UPDATE_CHECKOUT}" \
+        "Production checkout" || true
+    doctor_check_trusted_directory "${PRODUCTION_GIT_DIR}" \
+        "Production Git metadata" || true
+    doctor_check_trusted_directory "${UPDATE_SCRIPTS_DIR}" \
+        "Production scripts directory" || true
+    doctor_check_trusted_file "${UPDATE_SCRIPT}" "Production updater" || true
+    doctor_check_trusted_file "${PRODUCTION_MANAGER_SOURCE}" \
+        "Production Manager source" || true
+    doctor_check_trusted_file "${PRODUCTION_SERVICE_UNIT}" \
+        "Production service unit" || true
+    doctor_check_production_venv || true
+    if [[ -x ${PRODUCTION_BOT_EXECUTABLE} ]]; then
+        doctor_trust_result OK "Production bot executable" \
+            "executable at ${PRODUCTION_BOT_EXECUTABLE}"
+    else
+        doctor_trust_result FAIL "Production bot executable" \
+            "missing or not executable at ${PRODUCTION_BOT_EXECUTABLE}"
+    fi
+
+    if ((DOCTOR_UPDATE_FAILURES == 0)); then
+        doctor_result OK "Update readiness" "READY"
+    else
+        doctor_result FAIL "Update readiness" \
+            "NOT READY; restore trust through manual review/migration/reinstall from trusted source"
+    fi
+}
+
 doctor_check_units() {
     local bot_load_state
     local bot_active_state
@@ -858,6 +1058,7 @@ show_doctor() {
         "uv bootstrap" true
     doctor_check_directory "${UV_CACHE_DIR}" "uv cache"
     doctor_check_units
+    doctor_check_production_trust
 
     if ((DOCTOR_FAILURES == 0)); then
         printf 'Overall: HEALTHY\n'

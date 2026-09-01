@@ -30,6 +30,9 @@ def run_manager(
     process_environment = os.environ.copy()
     if environment is not None:
         process_environment.update(environment)
+    test_manager = process_environment.pop("KANAMI_TEST_MANAGER_COPY", None)
+    if script == MANAGER_SCRIPT and test_manager is not None:
+        script = Path(test_manager)
     return subprocess.run(
         [BASH, str(script), *arguments],
         cwd=REPOSITORY_ROOT,
@@ -298,6 +301,130 @@ esac
     return test_manager, environment, invocation_log, checkout, updater
 
 
+def create_doctor_trust_test_manager(
+    tmp_path: Path,
+) -> tuple[Path, dict[str, str]]:
+    production_checkout = tmp_path / "production-kanami"
+    production_git = production_checkout / ".git"
+    production_scripts = production_checkout / "scripts"
+    production_deploy = production_checkout / "deploy"
+    production_venv = production_checkout / ".venv"
+    production_updater = production_scripts / "update.sh"
+    production_manager = production_scripts / "manager.sh"
+    production_unit = production_deploy / "kanami.service"
+    production_bot = production_venv / "bin/discord-stats-bot"
+    production_git.mkdir(parents=True)
+    production_scripts.mkdir()
+    production_deploy.mkdir()
+    production_venv.mkdir()
+    production_updater.write_text("# updater fixture\n", encoding="utf-8")
+    production_manager.write_text("# manager fixture\n", encoding="utf-8")
+    production_unit.write_text("[Unit]\n", encoding="utf-8")
+    write_executable(production_bot)
+
+    tools_dir = tmp_path / "doctor-tools"
+    fake_bash = tools_dir / "bash"
+    fake_stat = tools_dir / "stat"
+    tools_dir.mkdir()
+    fake_bash.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_stat.write_text(
+        """#!/usr/bin/env bash
+set -u
+path="${!#}"
+case "${path}" in
+    "${KANAMI_TEST_TRUST_CHECKOUT:?}")
+        printf '%s %s %s\n' \
+            "${KANAMI_TEST_TRUST_CHECKOUT_UID:-0}" \
+            "${KANAMI_TEST_TRUST_CHECKOUT_GID:-0}" \
+            "${KANAMI_TEST_TRUST_CHECKOUT_MODE:-755}"
+        ;;
+    "${KANAMI_TEST_TRUST_GIT:?}")
+        printf '%s %s %s\n' \
+            "${KANAMI_TEST_TRUST_GIT_UID:-0}" \
+            "${KANAMI_TEST_TRUST_GIT_GID:-0}" \
+            "${KANAMI_TEST_TRUST_GIT_MODE:-755}"
+        ;;
+    "${KANAMI_TEST_TRUST_SCRIPTS:?}")
+        printf '%s %s %s\n' \
+            "${KANAMI_TEST_TRUST_SCRIPTS_UID:-0}" \
+            "${KANAMI_TEST_TRUST_SCRIPTS_GID:-0}" \
+            "${KANAMI_TEST_TRUST_SCRIPTS_MODE:-755}"
+        ;;
+    "${KANAMI_TEST_TRUST_UPDATER:?}")
+        printf '%s %s %s\n' \
+            "${KANAMI_TEST_TRUST_UPDATER_UID:-0}" \
+            "${KANAMI_TEST_TRUST_UPDATER_GID:-0}" \
+            "${KANAMI_TEST_TRUST_UPDATER_MODE:-644}"
+        ;;
+    "${KANAMI_TEST_TRUST_MANAGER:?}")
+        printf '%s %s %s\n' \
+            "${KANAMI_TEST_TRUST_MANAGER_UID:-0}" \
+            "${KANAMI_TEST_TRUST_MANAGER_GID:-0}" \
+            "${KANAMI_TEST_TRUST_MANAGER_MODE:-644}"
+        ;;
+    "${KANAMI_TEST_TRUST_UNIT:?}")
+        printf '%s %s %s\n' \
+            "${KANAMI_TEST_TRUST_UNIT_UID:-0}" \
+            "${KANAMI_TEST_TRUST_UNIT_GID:-0}" \
+            "${KANAMI_TEST_TRUST_UNIT_MODE:-644}"
+        ;;
+    "${KANAMI_TEST_TRUST_VENV:?}")
+        printf '%s %s %s\n' \
+            "${KANAMI_TEST_TRUST_VENV_OWNER:-kanami}" \
+            "${KANAMI_TEST_TRUST_VENV_GROUP:-kanami}" \
+            "${KANAMI_TEST_TRUST_VENV_MODE:-750}"
+        ;;
+    *)
+        exit 64
+        ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    fake_bash.chmod(0o755)
+    fake_stat.chmod(0o755)
+
+    source = MANAGER_SCRIPT.read_text(encoding="utf-8")
+    replacements = {
+        'readonly UPDATE_CHECKOUT="/opt/kanami"': (
+            f'readonly UPDATE_CHECKOUT="{production_checkout.as_posix()}"'
+        ),
+        'readonly UPDATE_SCRIPTS_DIR="/opt/kanami/scripts"': (
+            f'readonly UPDATE_SCRIPTS_DIR="{production_scripts.as_posix()}"'
+        ),
+        'readonly UPDATE_SCRIPT="/opt/kanami/scripts/update.sh"': (
+            f'readonly UPDATE_SCRIPT="{production_updater.as_posix()}"'
+        ),
+        'readonly UPDATE_BASH="/usr/bin/bash"': (
+            f'readonly UPDATE_BASH="{fake_bash.as_posix()}"'
+        ),
+        'readonly UPDATE_STAT="/usr/bin/stat"': (
+            f'readonly UPDATE_STAT="{fake_stat.as_posix()}"'
+        ),
+    }
+    for production_value, test_value in replacements.items():
+        assert source.count(production_value) == 1
+        source = source.replace(production_value, test_value)
+
+    test_manager = tmp_path / "doctor-manager"
+    test_manager.write_text(source, encoding="utf-8")
+    test_manager.chmod(0o755)
+    environment = {
+        "KANAMI_TEST_MANAGER_COPY": test_manager.as_posix(),
+        "KANAMI_TEST_TRUST_CHECKOUT": production_checkout.as_posix(),
+        "KANAMI_TEST_TRUST_GIT": production_git.as_posix(),
+        "KANAMI_TEST_TRUST_SCRIPTS": production_scripts.as_posix(),
+        "KANAMI_TEST_TRUST_UPDATER": production_updater.as_posix(),
+        "KANAMI_TEST_TRUST_MANAGER": production_manager.as_posix(),
+        "KANAMI_TEST_TRUST_UNIT": production_unit.as_posix(),
+        "KANAMI_TEST_TRUST_VENV": production_venv.as_posix(),
+        "KANAMI_TEST_TRUST_BOT": production_bot.as_posix(),
+        "KANAMI_TEST_TRUST_BASH": fake_bash.as_posix(),
+        "KANAMI_TEST_TRUST_STAT": fake_stat.as_posix(),
+    }
+    return test_manager, environment
+
+
 def create_checkout(tmp_path: Path) -> Path:
     checkout = tmp_path / "checkout"
     checkout.mkdir()
@@ -375,7 +502,8 @@ def create_manager_environment(
     write_executable(uv_bootstrap / "bin/uv")
     uv_cache.mkdir()
     fake_systemctl = create_fake_systemctl(tmp_path)
-    return {
+    _, trust_environment = create_doctor_trust_test_manager(tmp_path)
+    environment = {
         "PATH": str(fake_systemctl.parent) + os.pathsep + os.environ.get("PATH", ""),
         "KANAMI_MANAGER_INSTALL_DIR": str(checkout),
         "KANAMI_MANAGER_UV_BOOTSTRAP_DIR": str(uv_bootstrap),
@@ -387,6 +515,8 @@ def create_manager_environment(
         "DISCORD_TOKEN": SECRET_TOKEN,
         "DATABASE_URL": SECRET_DATABASE_URL,
     }
+    environment.update(trust_environment)
+    return environment
 
 
 @pytest.fixture
@@ -1518,7 +1648,209 @@ def test_doctor_reports_healthy_foundation_with_optional_web_admin_missing(
         result.stdout
     )
     assert "[SKIP] kanami-web-admin.service active:" in result.stdout
+    assert "Production trust:" in result.stdout
+    assert "[OK] Production checkout: trusted root-owned directory" in result.stdout
+    assert "[OK] Production Git metadata: trusted root-owned directory" in (
+        result.stdout
+    )
+    assert "[OK] Production scripts directory: trusted root-owned directory" in (
+        result.stdout
+    )
+    assert "[OK] Production updater: trusted root-owned file" in result.stdout
+    assert "[OK] Production Manager source: trusted root-owned file" in result.stdout
+    assert "[OK] Production service unit: trusted root-owned file" in result.stdout
+    assert (
+        "[OK] Production project venv: allowed kanami:kanami writable exception"
+        in result.stdout
+    )
+    assert "[OK] Production bot executable: executable" in result.stdout
+    assert "[OK] Update readiness: READY" in result.stdout
     assert "Overall: HEALTHY" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("metadata_name", "metadata_value", "expected_check"),
+    [
+        ("KANAMI_TEST_TRUST_CHECKOUT_UID", "1000", "Production checkout"),
+        ("KANAMI_TEST_TRUST_SCRIPTS_GID", "1000", "Production scripts directory"),
+        ("KANAMI_TEST_TRUST_UPDATER_MODE", "664", "Production updater"),
+    ],
+)
+def test_doctor_rejects_noncanonical_production_trust_metadata(
+    healthy_installation: tuple[Path, dict[str, str]],
+    metadata_name: str,
+    metadata_value: str,
+    expected_check: str,
+) -> None:
+    _, environment = healthy_installation
+    environment[metadata_name] = metadata_value
+
+    result = run_manager("doctor", environment=environment)
+
+    assert result.returncode == 1
+    assert f"[FAIL] {expected_check}:" in result.stdout
+    assert "[FAIL] Update readiness: NOT READY" in result.stdout
+    assert "Overall: UNHEALTHY" in result.stdout
+
+
+def test_doctor_identifies_legacy_service_user_owned_checkout(
+    healthy_installation: tuple[Path, dict[str, str]],
+) -> None:
+    _, environment = healthy_installation
+    environment["KANAMI_TEST_TRUST_CHECKOUT_UID"] = "1000"
+    environment["KANAMI_TEST_TRUST_CHECKOUT_GID"] = "1000"
+
+    result = run_manager("doctor", environment=environment)
+
+    assert result.returncode == 1
+    assert "non-canonical ownership UID 1000 GID 1000" in result.stdout
+    assert "privileged update must not run" in result.stdout
+    assert "manual review/migration/reinstall from trusted source" in result.stdout
+    assert "chown -R" not in result.stdout
+    assert "[FAIL] Update readiness: NOT READY" in result.stdout
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="requires Unix symlink semantics")
+@pytest.mark.parametrize(
+    "component",
+    ["checkout", "scripts", "updater", "manager", "unit"],
+)
+def test_doctor_rejects_symlinked_production_trust_anchors(
+    healthy_installation: tuple[Path, dict[str, str]],
+    tmp_path: Path,
+    component: str,
+) -> None:
+    _, environment = healthy_installation
+    checkout = Path(environment["KANAMI_TEST_TRUST_CHECKOUT"])
+    scripts_dir = Path(environment["KANAMI_TEST_TRUST_SCRIPTS"])
+    paths = {
+        "updater": Path(environment["KANAMI_TEST_TRUST_UPDATER"]),
+        "manager": Path(environment["KANAMI_TEST_TRUST_MANAGER"]),
+        "unit": Path(environment["KANAMI_TEST_TRUST_UNIT"]),
+    }
+    if component == "checkout":
+        real_path = tmp_path / "real-production-kanami"
+        checkout.rename(real_path)
+        checkout.symlink_to(real_path, target_is_directory=True)
+    elif component == "scripts":
+        real_path = checkout / "real-scripts"
+        scripts_dir.rename(real_path)
+        scripts_dir.symlink_to(real_path.name, target_is_directory=True)
+    else:
+        path = paths[component]
+        real_path = path.with_name(f"real-{path.name}")
+        path.rename(real_path)
+        path.symlink_to(real_path.name)
+
+    result = run_manager("doctor", environment=environment)
+
+    assert result.returncode == 1
+    assert "must not be a symlink" in result.stdout
+    assert "[FAIL] Update readiness: NOT READY" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("metadata_name", "metadata_value"),
+    [
+        ("KANAMI_TEST_TRUST_VENV_OWNER", "root"),
+        ("KANAMI_TEST_TRUST_VENV_GROUP", "root"),
+        ("KANAMI_TEST_TRUST_VENV_MODE", "550"),
+    ],
+)
+def test_doctor_rejects_invalid_production_venv_exception(
+    healthy_installation: tuple[Path, dict[str, str]],
+    metadata_name: str,
+    metadata_value: str,
+) -> None:
+    _, environment = healthy_installation
+    environment[metadata_name] = metadata_value
+
+    result = run_manager("doctor", environment=environment)
+
+    assert result.returncode == 1
+    assert "[FAIL] Production project venv:" in result.stdout
+    assert "[FAIL] Update readiness: NOT READY" in result.stdout
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="requires Unix symlink semantics")
+def test_doctor_rejects_symlinked_production_venv(
+    healthy_installation: tuple[Path, dict[str, str]],
+    tmp_path: Path,
+) -> None:
+    _, environment = healthy_installation
+    venv = Path(environment["KANAMI_TEST_TRUST_VENV"])
+    real_venv = tmp_path / "real-production-venv"
+    venv.rename(real_venv)
+    venv.symlink_to(real_venv, target_is_directory=True)
+
+    result = run_manager("doctor", environment=environment)
+
+    assert result.returncode == 1
+    assert "writable exception must not be a symlink" in result.stdout
+    assert "[FAIL] Update readiness: NOT READY" in result.stdout
+
+
+def test_doctor_rejects_missing_production_bot_executable(
+    healthy_installation: tuple[Path, dict[str, str]],
+) -> None:
+    _, environment = healthy_installation
+    Path(environment["KANAMI_TEST_TRUST_BOT"]).unlink()
+
+    result = run_manager("doctor", environment=environment)
+
+    assert result.returncode == 1
+    assert "[FAIL] Production bot executable: missing or not executable" in (
+        result.stdout
+    )
+    assert "[FAIL] Update readiness: NOT READY" in result.stdout
+
+
+@pytest.mark.parametrize("utility", ["BASH", "STAT"])
+def test_doctor_rejects_missing_fixed_update_utility(
+    healthy_installation: tuple[Path, dict[str, str]],
+    utility: str,
+) -> None:
+    _, environment = healthy_installation
+    Path(environment[f"KANAMI_TEST_TRUST_{utility}"]).unlink()
+
+    result = run_manager("doctor", environment=environment)
+
+    assert result.returncode == 1
+    assert f"[FAIL] Production {utility.lower()}: unavailable" in result.stdout
+    assert "[FAIL] Update readiness: NOT READY" in result.stdout
+
+
+def test_production_trust_doctor_is_read_only_and_secret_free() -> None:
+    diagnostic_source = "\n".join(
+        (
+            shell_function_source("doctor_trust_result"),
+            shell_function_source("doctor_check_trusted_directory"),
+            shell_function_source("doctor_check_trusted_file"),
+            shell_function_source("doctor_check_production_venv"),
+            shell_function_source("doctor_check_production_trust"),
+        )
+    )
+
+    assert "EUID" not in diagnostic_source
+    assert '"${UPDATE_BASH}" "${UPDATE_SCRIPT}"' not in diagnostic_source
+    assert not re.search(
+        r"^\s*(?:sudo|su|eval|source|\.)\b", diagnostic_source, re.MULTILINE
+    )
+    for forbidden in (
+        "chown",
+        "chmod",
+        "git pull",
+        "git fetch",
+        "uv sync",
+        "alembic",
+        "systemctl start",
+        "systemctl stop",
+        "systemctl restart",
+        "DATABASE_URL",
+        "DISCORD_TOKEN",
+        "kanami.env",
+    ):
+        assert forbidden not in diagnostic_source
 
 
 def test_doctor_reports_missing_checkout_as_unhealthy(tmp_path: Path) -> None:
