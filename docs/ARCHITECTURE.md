@@ -1334,12 +1334,22 @@ reacceptance workflow намеренно отложены.
   follow mode и Web Admin logs отсутствуют. Exit code journalctl передаётся
   прямому CLI caller; доступ определяется внешней system journal policy. Manager
   не редактирует raw journal output и не создаёт ложной гарантии redaction.
+- D2.7 добавляет root-only `start`/`stop` только для `kanami.service` через уже
+  фиксированный `/usr/bin/systemctl`. Оба action проверяют `EUID=0`, executable и
+  `LoadState=loaded` до mutation. Start делает active service no-op success,
+  иначе выполняет start и подтверждает active state. Stop остаётся идемпотентным
+  штатным systemctl action, но success допускается только после textual
+  `is-active` state `inactive`; `failed` и другие non-active states не считаются
+  эквивалентом. Manager не выполняет auto-sudo, daemon-reload, reset-failed или
+  enable/disable и не затрагивает optional Web Admin. Прямые CLI actions не
+  требуют confirmation.
 - Menu остаётся presentation loop: пункты 1–4 вызывают существующие read-only
   status/doctor/version/help functions, `0` завершает menu, а новый пункт
   `5. Restart bot` требует отдельного positive confirmation. Пункт `6. Logs`
   вызывает default read-only просмотр 100 записей без confirmation и возвращает
-  пользователя в menu также после journalctl failure. Отмена restart и EOF не
-  меняют service; ошибка restart возвращает пользователя в menu. Прямой
+  пользователя в menu также после journalctl failure. `7. Start bot` выполняет
+  action без confirmation, а `8. Stop bot` требует явного y/Y/yes/YES. Отмена,
+  EOF и action failure возвращают пользователя в menu. Прямой
   `sudo kanami restart` считается явным намерением и confirmation не требует.
   Неявный запуск menu требует TTY на stdin и stdout; non-TTY запуск без аргументов
   показывает help, invalid input повторяет menu, EOF завершается успешно.

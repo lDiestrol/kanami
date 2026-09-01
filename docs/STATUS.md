@@ -68,6 +68,13 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что уже выполнено
 
+- D2.7: добавлены controlled root-only `kanami start`/`kanami stop` только для
+  основного `kanami.service` через фиксированный `/usr/bin/systemctl`. Оба action
+  проверяют `LoadState=loaded`; start не повторяет active service и подтверждает
+  active state после запуска, stop принимает success только при точном конечном
+  `inactive`. Menu добавляет `7. Start bot` без confirmation и `8. Stop bot` с
+  y/Y/yes/YES confirmation. Auto-sudo, Web Admin mutation, daemon-reload,
+  reset-failed и изменение enable/disable policy отсутствуют.
 - D2.6: добавлен read-only `kanami logs` только для journal основного
   `kanami.service`: фиксированный `/usr/bin/journalctl`, default 100 записей,
   validated `--lines N` 1..1000 и обязательный `--no-pager`. Команда не требует
@@ -1000,10 +1007,10 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что сейчас делается
 
-D2.6 подготовлен как отдельный checkpoint безопасного read-only просмотра
-последних записей journal только основного `kanami.service`. Follow mode, Web
-Admin logs, остальные lifecycle actions, rollback, PostgreSQL/Alembic/HTTP
-doctor probes и backup/restore в текущий scope не входят.
+D2.7 подготовлен как отдельный checkpoint controlled start/stop только основного
+`kanami.service`. Web Admin lifecycle, enable/disable, остальные manager actions,
+rollback, PostgreSQL/Alembic/HTTP doctor probes и backup/restore в текущий scope
+не входят.
 
 WUI-4A.1 и оба responsive hotfix развёрнуты в production. Первый hotfix исправил
 расположение compact-кнопки «Профиль» справа в member row на tablet width. Второй
@@ -1284,7 +1291,9 @@ automation, settings/env, migrations и intents для `/health` не добав
   фиксированный `/usr/bin/systemctl`. D2.6 читает только его raw journal через
   фиксированный `/usr/bin/journalctl`, отключает pager и валидирует bounded
   `--lines`; фактический доступ остаётся под system journal permissions. Manager
-  не объявляет release version до появления version lifecycle.
+  D2.7 добавляет root-only start/stop основного bot с точными post-state checks,
+  не затрагивая Web Admin или boot policy. Manager не объявляет release version
+  до появления version lifecycle.
   Doctor считает основной bot deployment обязательным, а отдельный Web Admin —
   optional; hermetic tests подменяют read-only manager paths и `PATH`. Installer
   создаёт regular root-owned copy, а updater после успешного pull refresh-ит её
@@ -1343,10 +1352,10 @@ automation, settings/env, migrations и intents для `/health` не добав
 
 ## Следующие шаги
 
-1. Продолжить D2.7+ отдельными небольшими manager checkpoint-этапами.
-   Follow/Web Admin logs, start/stop/update/install, Web Admin restart,
+1. Продолжить D2.8+ отдельными небольшими manager checkpoint-этапами.
+   Follow/Web Admin logs, update/install, Web Admin lifecycle, enable/disable,
    backup/restore/rollback и PostgreSQL/Alembic/HTTP doctor probes не входят в
-   D2.6.
+   D2.7.
 2. При следующем реальном этапе Rules Compliance / reacceptance проверить
    оставшийся production scenario: Publish новой Rules version → успешный DB
    commit → automatic Bot Control sync → обновление существующего managed message

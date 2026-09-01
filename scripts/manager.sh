@@ -28,6 +28,8 @@ Commands:
   doctor     Run detailed read-only installation diagnostics
   logs       Show recent Kanami bot logs
   restart    Restart the main Kanami bot service
+  start      Start the main Kanami bot service
+  stop       Stop the main Kanami bot service
   menu       Open the interactive menu
 
 Logs usage: kanami logs [--lines N]
@@ -44,6 +46,8 @@ Kanami Manager
 4. Help
 5. Restart bot
 6. Logs
+7. Start bot
+8. Stop bot
 0. Exit
 EOF
 }
@@ -68,12 +72,32 @@ confirm_restart() {
     esac
 }
 
+confirm_stop() {
+    local answer
+
+    printf 'Stop kanami.service? [y/N]: '
+    if ! IFS= read -r answer; then
+        printf '\nStop cancelled.\n'
+        return 1
+    fi
+    answer="${answer%$'\r'}"
+    case "${answer}" in
+        y | Y | yes | YES)
+            return 0
+            ;;
+        *)
+            printf 'Stop cancelled.\n'
+            return 1
+            ;;
+    esac
+}
+
 show_menu() {
     local choice
 
     while true; do
         show_menu_options
-        printf 'Select an option [0-6]: '
+        printf 'Select an option [0-8]: '
         if ! IFS= read -r choice; then
             printf '\nEnd of input; exiting.\n'
             return 0
@@ -105,12 +129,24 @@ show_menu() {
                     printf 'Unable to show logs.\n' >&2
                 fi
                 ;;
+            7)
+                if ! start_bot; then
+                    printf 'Start failed.\n'
+                fi
+                ;;
+            8)
+                if confirm_stop; then
+                    if ! stop_bot; then
+                        printf 'Stop failed.\n'
+                    fi
+                fi
+                ;;
             0)
                 printf 'Goodbye.\n'
                 return 0
                 ;;
             *)
-                printf 'Invalid choice: %s. Select a number from 0 to 6.\n' \
+                printf 'Invalid choice: %s. Select a number from 0 to 8.\n' \
                     "${choice}"
                 ;;
         esac
@@ -260,6 +296,104 @@ show_logs() {
     fi
 
     "${JOURNALCTL}" -u "${BOT_SERVICE}" -n "${lines}" --no-pager
+}
+
+lifecycle_usage_error() {
+    local action="$1"
+
+    printf '%s: %s does not accept arguments\n' \
+        "${PROGRAM_NAME}" "${action}" >&2
+    printf 'Usage: sudo %s %s\n' "${PROGRAM_NAME}" "${action}" >&2
+    return 2
+}
+
+validate_bot_lifecycle_action() {
+    local action="$1"
+    local load_state
+
+    if [[ ${EUID} -ne 0 ]]; then
+        printf '%s: %s requires root; run: sudo %s %s\n' \
+            "${PROGRAM_NAME}" "${action}" "${PROGRAM_NAME}" "${action}" >&2
+        return 1
+    fi
+    if [[ ! -x ${MUTATING_SYSTEMCTL} ]]; then
+        printf '%s: cannot %s %s: %s is unavailable\n' \
+            "${PROGRAM_NAME}" "${action}" "${BOT_SERVICE}" \
+            "${MUTATING_SYSTEMCTL}" >&2
+        return 1
+    fi
+    load_state="$("${MUTATING_SYSTEMCTL}" show "${BOT_SERVICE}" \
+        --property=LoadState --value 2>/dev/null)" || {
+        printf '%s: cannot verify %s load state before %s\n' \
+            "${PROGRAM_NAME}" "${BOT_SERVICE}" "${action}" >&2
+        return 1
+    }
+    load_state="${load_state%%$'\n'*}"
+    if [[ ${load_state} == "loaded" ]]; then
+        return 0
+    fi
+    case "${load_state}" in
+        not-found)
+            printf '%s: cannot %s %s: unit is not installed\n' \
+                "${PROGRAM_NAME}" "${action}" "${BOT_SERVICE}" >&2
+            ;;
+        masked | error | bad-setting)
+            printf '%s: cannot %s %s: abnormal load state: %s\n' \
+                "${PROGRAM_NAME}" "${action}" "${BOT_SERVICE}" \
+                "${load_state}" >&2
+            ;;
+        *)
+            printf '%s: cannot %s %s: load state unavailable\n' \
+                "${PROGRAM_NAME}" "${action}" "${BOT_SERVICE}" >&2
+            ;;
+    esac
+    return 1
+}
+
+start_bot() {
+    validate_bot_lifecycle_action start || return 1
+
+    if "${MUTATING_SYSTEMCTL}" is-active --quiet "${BOT_SERVICE}"; then
+        printf '%s is already active.\n' "${BOT_SERVICE}"
+        return 0
+    fi
+    if ! "${MUTATING_SYSTEMCTL}" start "${BOT_SERVICE}"; then
+        printf '%s: failed to start %s\n' \
+            "${PROGRAM_NAME}" "${BOT_SERVICE}" >&2
+        return 1
+    fi
+    if ! "${MUTATING_SYSTEMCTL}" is-active --quiet "${BOT_SERVICE}"; then
+        printf '%s: %s is not active after start\n' \
+            "${PROGRAM_NAME}" "${BOT_SERVICE}" >&2
+        return 1
+    fi
+
+    printf '%s started successfully.\n' "${BOT_SERVICE}"
+}
+
+stop_bot() {
+    local active_state
+
+    validate_bot_lifecycle_action stop || return 1
+
+    if ! "${MUTATING_SYSTEMCTL}" stop "${BOT_SERVICE}"; then
+        printf '%s: failed to stop %s\n' \
+            "${PROGRAM_NAME}" "${BOT_SERVICE}" >&2
+        return 1
+    fi
+    active_state="$("${MUTATING_SYSTEMCTL}" is-active \
+        "${BOT_SERVICE}" 2>/dev/null)" || true
+    active_state="${active_state%%$'\n'*}"
+    if [[ ${active_state} != "inactive" ]]; then
+        if [[ -z ${active_state} ]]; then
+            active_state="unknown"
+        fi
+        printf '%s: %s state after stop is %s, expected inactive\n' \
+            "${PROGRAM_NAME}" "${BOT_SERVICE}" "${active_state}" >&2
+        return 1
+    fi
+
+    printf '%s stopped successfully.\n' "${BOT_SERVICE}"
 }
 
 restart_bot() {
@@ -622,6 +756,22 @@ main() {
             ;;
         restart)
             restart_bot
+            ;;
+        start)
+            shift
+            if (($# > 0)); then
+                lifecycle_usage_error start
+            else
+                start_bot
+            fi
+            ;;
+        stop)
+            shift
+            if (($# > 0)); then
+                lifecycle_usage_error stop
+            else
+                stop_bot
+            fi
             ;;
         menu)
             show_menu

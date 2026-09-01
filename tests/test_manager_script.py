@@ -107,6 +107,99 @@ exit "${KANAMI_TEST_JOURNAL_EXIT_CODE:-0}"
     return test_manager, environment, arguments_file
 
 
+def create_lifecycle_test_manager(
+    tmp_path: Path,
+    *,
+    mode: str,
+    load_state: str = "loaded",
+    show_exit_code: int = 0,
+    initial_active_state: str = "inactive",
+    post_start_state: str = "active",
+    start_exit_code: int = 0,
+    post_stop_state: str = "inactive",
+    stop_exit_code: int = 0,
+) -> tuple[Path, dict[str, str], Path]:
+    fake_systemctl = tmp_path / "bin/systemctl"
+    command_log = tmp_path / "systemctl-commands.txt"
+    action_marker = tmp_path / "systemctl-action-completed"
+    fake_systemctl.parent.mkdir(parents=True)
+    fake_systemctl.write_text(
+        """#!/usr/bin/env bash
+set -u
+printf '%s\n' "$*" >> "${KANAMI_TEST_SYSTEMCTL_COMMAND_LOG:?}"
+
+case "${1:-}" in
+    show)
+        if ((KANAMI_TEST_SHOW_EXIT_CODE != 0)); then
+            exit "${KANAMI_TEST_SHOW_EXIT_CODE}"
+        fi
+        printf '%s\n' "${KANAMI_TEST_LOAD_STATE}"
+        ;;
+    is-active)
+        quiet=false
+        if [[ ${2:-} == "--quiet" ]]; then
+            quiet=true
+        fi
+        if [[ ${KANAMI_TEST_LIFECYCLE_MODE} == "start" ]]; then
+            if [[ -f ${KANAMI_TEST_ACTION_MARKER} ]]; then
+                state="${KANAMI_TEST_POST_START_STATE}"
+            else
+                state="${KANAMI_TEST_INITIAL_ACTIVE_STATE}"
+            fi
+        else
+            state="${KANAMI_TEST_POST_STOP_STATE}"
+        fi
+        if [[ ${quiet} == "false" ]]; then
+            printf '%s\n' "${state}"
+        fi
+        [[ ${state} == "active" ]]
+        ;;
+    start)
+        touch "${KANAMI_TEST_ACTION_MARKER}"
+        exit "${KANAMI_TEST_START_EXIT_CODE}"
+        ;;
+    stop)
+        touch "${KANAMI_TEST_ACTION_MARKER}"
+        exit "${KANAMI_TEST_STOP_EXIT_CODE}"
+        ;;
+    *)
+        exit 64
+        ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    fake_systemctl.chmod(0o755)
+
+    source = MANAGER_SCRIPT.read_text(encoding="utf-8")
+    systemctl_boundary = 'readonly MUTATING_SYSTEMCTL="/usr/bin/systemctl"'
+    root_boundary = "if [[ ${EUID} -ne 0 ]]; then"
+    assert source.count(systemctl_boundary) == 1
+    assert source.count(root_boundary) == 1
+    test_manager = tmp_path / "kanami"
+    test_manager.write_text(
+        source.replace(
+            systemctl_boundary,
+            f'readonly MUTATING_SYSTEMCTL="{fake_systemctl.as_posix()}"',
+        ).replace(root_boundary, "if false; then"),
+        encoding="utf-8",
+    )
+    test_manager.chmod(0o755)
+    environment = {
+        "KANAMI_TEST_SYSTEMCTL_COMMAND_LOG": command_log.as_posix(),
+        "KANAMI_TEST_ACTION_MARKER": action_marker.as_posix(),
+        "KANAMI_TEST_LIFECYCLE_MODE": mode,
+        "KANAMI_TEST_LOAD_STATE": load_state,
+        "KANAMI_TEST_SHOW_EXIT_CODE": str(show_exit_code),
+        "KANAMI_TEST_INITIAL_ACTIVE_STATE": initial_active_state,
+        "KANAMI_TEST_POST_START_STATE": post_start_state,
+        "KANAMI_TEST_START_EXIT_CODE": str(start_exit_code),
+        "KANAMI_TEST_POST_STOP_STATE": post_stop_state,
+        "KANAMI_TEST_STOP_EXIT_CODE": str(stop_exit_code),
+    }
+    return test_manager, environment, command_log
+
+
 def create_checkout(tmp_path: Path) -> Path:
     checkout = tmp_path / "checkout"
     checkout.mkdir()
@@ -226,6 +319,8 @@ def test_help_aliases_show_the_same_help(argument: str) -> None:
     assert "doctor" in result.stdout
     assert "logs       Show recent Kanami bot logs" in result.stdout
     assert "restart" in result.stdout
+    assert "start      Start the main Kanami bot service" in result.stdout
+    assert "stop       Stop the main Kanami bot service" in result.stdout
     assert "menu" in result.stdout
     assert result.stderr == ""
 
@@ -251,8 +346,10 @@ def test_menu_preserves_read_only_options_adds_restart_and_exits() -> None:
     assert "4. Help" in result.stdout
     assert "5. Restart bot" in result.stdout
     assert "6. Logs" in result.stdout
+    assert "7. Start bot" in result.stdout
+    assert "8. Stop bot" in result.stdout
     assert "0. Exit" in result.stdout
-    assert "Select an option [0-6]:" in result.stdout
+    assert "Select an option [0-8]:" in result.stdout
     assert "Install" not in result.stdout
     assert "Update" not in result.stdout
     assert "Backup" not in result.stdout
@@ -312,7 +409,7 @@ def test_menu_invalid_choice_returns_to_menu() -> None:
     result = run_manager("menu", input_text="invalid\n0\n")
 
     assert result.returncode == 0
-    assert "Invalid choice: invalid. Select a number from 0 to 6." in result.stdout
+    assert "Invalid choice: invalid. Select a number from 0 to 8." in result.stdout
     assert result.stdout.count("1. Status") == 2
     assert "Goodbye." in result.stdout
 
@@ -532,6 +629,351 @@ def test_logs_does_not_escalate_or_access_other_subsystems() -> None:
         "stop",
     ):
         assert forbidden not in logs_source
+
+
+@pytest.mark.parametrize("action", ["start", "stop"])
+def test_start_and_stop_reject_positional_arguments(action: str) -> None:
+    result = run_manager(action, "anything")
+
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert f"Usage: sudo kanami {action}" in result.stderr
+
+
+@pytest.mark.parametrize("action", ["start", "stop"])
+def test_start_and_stop_reject_non_root_without_mutation(action: str) -> None:
+    if not hasattr(os, "geteuid") or os.geteuid() == 0:
+        pytest.skip("behavioral root-boundary check requires a non-root host")
+
+    result = run_manager(action)
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert f"{action} requires root" in result.stderr
+    assert f"sudo kanami {action}" in result.stderr
+
+
+def test_start_stop_use_fixed_bot_only_production_boundary() -> None:
+    source = MANAGER_SCRIPT.read_text(encoding="utf-8")
+    validation_source = shell_function_source("validate_bot_lifecycle_action")
+    start_source = shell_function_source("start_bot")
+    stop_source = shell_function_source("stop_bot")
+    lifecycle_source = validation_source + start_source + stop_source
+
+    assert 'readonly MUTATING_SYSTEMCTL="/usr/bin/systemctl"' in source
+    assert 'readonly BOT_SERVICE="kanami.service"' in source
+    assert "KANAMI_MANAGER_SYSTEMCTL" not in source
+    assert 'MUTATING_SYSTEMCTL="${' not in source
+    assert "kanami-web-admin.service" not in lifecycle_source
+    assert "KANAMI_MANAGER_INSTALL_DIR" not in lifecycle_source
+    assert "KANAMI_MANAGER_UV_BOOTSTRAP_DIR" not in lifecycle_source
+    assert "KANAMI_MANAGER_UV_CACHE_DIR" not in lifecycle_source
+    assert validation_source.index("EUID") < validation_source.index(
+        '"${MUTATING_SYSTEMCTL}" show'
+    )
+
+
+@pytest.mark.parametrize(
+    ("action", "load_state"),
+    [
+        ("start", "not-found"),
+        ("start", "masked"),
+        ("start", "error"),
+        ("start", "bad-setting"),
+        ("start", "unknown"),
+        ("start", ""),
+        ("stop", "not-found"),
+        ("stop", "masked"),
+        ("stop", "error"),
+        ("stop", "bad-setting"),
+        ("stop", "unknown"),
+        ("stop", ""),
+    ],
+)
+def test_start_stop_reject_abnormal_load_states(
+    tmp_path: Path,
+    action: str,
+    load_state: str,
+) -> None:
+    manager, environment, command_log = create_lifecycle_test_manager(
+        tmp_path,
+        mode=action,
+        load_state=load_state,
+    )
+
+    result = run_manager(action, environment=environment, script=manager)
+
+    assert result.returncode != 0
+    assert "successfully" not in result.stdout
+    commands = command_log.read_text(encoding="utf-8").splitlines()
+    assert commands == ["show kanami.service --property=LoadState --value"]
+
+
+@pytest.mark.parametrize("action", ["start", "stop"])
+def test_start_stop_fail_when_load_state_cannot_be_read(
+    tmp_path: Path,
+    action: str,
+) -> None:
+    manager, environment, command_log = create_lifecycle_test_manager(
+        tmp_path,
+        mode=action,
+        show_exit_code=5,
+    )
+
+    result = run_manager(action, environment=environment, script=manager)
+
+    assert result.returncode != 0
+    assert "cannot verify kanami.service load state" in result.stderr
+    assert command_log.read_text(encoding="utf-8").splitlines() == [
+        "show kanami.service --property=LoadState --value"
+    ]
+
+
+def test_start_is_noop_when_service_is_already_active(tmp_path: Path) -> None:
+    manager, environment, command_log = create_lifecycle_test_manager(
+        tmp_path,
+        mode="start",
+        initial_active_state="active",
+    )
+
+    result = run_manager("start", environment=environment, script=manager)
+
+    assert result.returncode == 0
+    assert "kanami.service is already active." in result.stdout
+    assert command_log.read_text(encoding="utf-8").splitlines() == [
+        "show kanami.service --property=LoadState --value",
+        "is-active --quiet kanami.service",
+    ]
+
+
+def test_start_inactive_service_and_verify_active_state(tmp_path: Path) -> None:
+    manager, environment, command_log = create_lifecycle_test_manager(
+        tmp_path,
+        mode="start",
+    )
+
+    result = run_manager("start", environment=environment, script=manager)
+
+    assert result.returncode == 0
+    assert "kanami.service started successfully." in result.stdout
+    assert command_log.read_text(encoding="utf-8").splitlines() == [
+        "show kanami.service --property=LoadState --value",
+        "is-active --quiet kanami.service",
+        "start kanami.service",
+        "is-active --quiet kanami.service",
+    ]
+
+
+def test_start_command_failure_is_not_reported_as_success(tmp_path: Path) -> None:
+    manager, environment, command_log = create_lifecycle_test_manager(
+        tmp_path,
+        mode="start",
+        start_exit_code=5,
+    )
+
+    result = run_manager("start", environment=environment, script=manager)
+
+    assert result.returncode != 0
+    assert "failed to start kanami.service" in result.stderr
+    assert "successfully" not in result.stdout
+    assert command_log.read_text(encoding="utf-8").splitlines()[-1] == (
+        "start kanami.service"
+    )
+
+
+def test_start_post_check_failure_is_not_reported_as_success(
+    tmp_path: Path,
+) -> None:
+    manager, environment, command_log = create_lifecycle_test_manager(
+        tmp_path,
+        mode="start",
+        post_start_state="failed",
+    )
+
+    result = run_manager("start", environment=environment, script=manager)
+
+    assert result.returncode != 0
+    assert "not active after start" in result.stderr
+    assert "successfully" not in result.stdout
+    assert command_log.read_text(encoding="utf-8").splitlines()[-1] == (
+        "is-active --quiet kanami.service"
+    )
+
+
+def test_stop_is_idempotent_and_confirms_inactive_state(tmp_path: Path) -> None:
+    manager, environment, command_log = create_lifecycle_test_manager(
+        tmp_path,
+        mode="stop",
+        post_stop_state="inactive",
+    )
+
+    result = run_manager("stop", environment=environment, script=manager)
+
+    assert result.returncode == 0
+    assert "kanami.service stopped successfully." in result.stdout
+    assert "Stop kanami.service?" not in result.stdout
+    assert command_log.read_text(encoding="utf-8").splitlines() == [
+        "show kanami.service --property=LoadState --value",
+        "stop kanami.service",
+        "is-active kanami.service",
+    ]
+
+
+@pytest.mark.parametrize(
+    "post_stop_state",
+    ["failed", "active", "activating", "deactivating", "unknown", ""],
+)
+def test_stop_rejects_unconfirmed_final_state(
+    tmp_path: Path,
+    post_stop_state: str,
+) -> None:
+    manager, environment, command_log = create_lifecycle_test_manager(
+        tmp_path,
+        mode="stop",
+        post_stop_state=post_stop_state,
+    )
+
+    result = run_manager("stop", environment=environment, script=manager)
+
+    assert result.returncode != 0
+    assert "expected inactive" in result.stderr
+    assert "successfully" not in result.stdout
+    assert command_log.read_text(encoding="utf-8").splitlines()[-1] == (
+        "is-active kanami.service"
+    )
+
+
+def test_stop_command_failure_is_not_reported_as_success(tmp_path: Path) -> None:
+    manager, environment, command_log = create_lifecycle_test_manager(
+        tmp_path,
+        mode="stop",
+        stop_exit_code=5,
+    )
+
+    result = run_manager("stop", environment=environment, script=manager)
+
+    assert result.returncode != 0
+    assert "failed to stop kanami.service" in result.stderr
+    assert "successfully" not in result.stdout
+    assert command_log.read_text(encoding="utf-8").splitlines()[-1] == (
+        "stop kanami.service"
+    )
+
+
+def test_menu_start_failure_returns_to_menu(tmp_path: Path) -> None:
+    manager, environment, _ = create_lifecycle_test_manager(
+        tmp_path,
+        mode="start",
+        start_exit_code=5,
+    )
+
+    result = run_manager(
+        "menu",
+        environment=environment,
+        input_text="7\n0\n",
+        script=manager,
+    )
+
+    assert result.returncode == 0
+    assert "Start failed." in result.stdout
+    assert result.stdout.count("1. Status") == 2
+    assert "Goodbye." in result.stdout
+
+
+@pytest.mark.parametrize("answer", ["", "n", "N", "invalid"])
+def test_menu_stop_requires_positive_confirmation(answer: str) -> None:
+    result = run_manager("menu", input_text=f"8\n{answer}\n0\n")
+
+    assert result.returncode == 0
+    assert "Stop kanami.service? [y/N]:" in result.stdout
+    assert "Stop cancelled." in result.stdout
+    assert result.stdout.count("1. Status") == 2
+    assert "stopped successfully" not in result.stdout
+    assert "Goodbye." in result.stdout
+
+
+def test_menu_stop_confirmation_eof_is_safe() -> None:
+    result = run_manager("menu", input_text="8\n")
+
+    assert result.returncode == 0
+    assert "Stop cancelled." in result.stdout
+    assert result.stdout.count("1. Status") == 2
+    assert "End of input; exiting." in result.stdout
+    assert "stopped successfully" not in result.stdout
+
+
+@pytest.mark.parametrize("answer", ["y", "Y", "yes", "YES"])
+def test_menu_stop_accepts_positive_confirmation(
+    tmp_path: Path,
+    answer: str,
+) -> None:
+    manager, environment, command_log = create_lifecycle_test_manager(
+        tmp_path,
+        mode="stop",
+    )
+
+    result = run_manager(
+        "menu",
+        environment=environment,
+        input_text=f"8\n{answer}\n0\n",
+        script=manager,
+    )
+
+    assert result.returncode == 0
+    assert "kanami.service stopped successfully." in result.stdout
+    assert "stop kanami.service" in command_log.read_text(encoding="utf-8")
+    assert result.stdout.count("1. Status") == 2
+    assert "Goodbye." in result.stdout
+
+
+def test_menu_stop_failure_returns_to_menu(tmp_path: Path) -> None:
+    manager, environment, _ = create_lifecycle_test_manager(
+        tmp_path,
+        mode="stop",
+        post_stop_state="failed",
+    )
+
+    result = run_manager(
+        "menu",
+        environment=environment,
+        input_text="8\ny\n0\n",
+        script=manager,
+    )
+
+    assert result.returncode == 0
+    assert "Stop failed." in result.stdout
+    assert result.stdout.count("1. Status") == 2
+    assert "Goodbye." in result.stdout
+
+
+def test_start_stop_do_not_escalate_or_access_other_subsystems() -> None:
+    lifecycle_source = "\n".join(
+        (
+            shell_function_source("validate_bot_lifecycle_action"),
+            shell_function_source("start_bot"),
+            shell_function_source("stop_bot"),
+        )
+    )
+
+    assert not re.search(r"^\s*(?:sudo|su)\b", lifecycle_source, re.MULTILINE)
+    for forbidden in (
+        "CONFIG_FILE",
+        "kanami.env",
+        "DISCORD_TOKEN",
+        "DATABASE_URL",
+        "git ",
+        "uv ",
+        "alembic",
+        "journalctl",
+        "daemon-reload",
+        '"${MUTATING_SYSTEMCTL}" restart',
+        '"${MUTATING_SYSTEMCTL}" enable',
+        '"${MUTATING_SYSTEMCTL}" disable',
+        '"${MUTATING_SYSTEMCTL}" mask',
+        '"${MUTATING_SYSTEMCTL}" unmask',
+        '"${MUTATING_SYSTEMCTL}" reset-failed',
+    ):
+        assert forbidden not in lifecycle_source
 
 
 def test_restart_validates_unit_and_post_restart_active_state() -> None:

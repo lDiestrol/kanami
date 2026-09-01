@@ -38,7 +38,7 @@ VM, `systemd` и локальный PostgreSQL. Предполагаются б�
 states и guild messages. Он не включает message content, typing или DM intents;
 presences включаются только через `GAME_TRACKING_ENABLED=true`.
 
-## Kanami Manager: установка, диагностика и restart
+## Kanami Manager: установка, диагностика и lifecycle
 
 Новая официальная установка копирует committed `scripts/manager.sh` из
 установленного checkout в `/usr/local/bin/kanami` с owner `root:root` и mode
@@ -51,6 +51,8 @@ kanami status
 kanami doctor
 kanami logs
 kanami logs --lines 50
+sudo kanami start
+sudo kanami stop
 sudo kanami restart
 kanami menu
 ```
@@ -79,19 +81,30 @@ application/system journal output; перед публикацией в issue и
 `kanami-web-admin.service`. Прямой CLI-вызов является явным намерением и не
 запрашивает дополнительное подтверждение.
 
+D2.7 добавляет root-only `sudo kanami start` и `sudo kanami stop` для того же
+`kanami.service` через фиксированный `/usr/bin/systemctl`. Start является
+идемпотентным: уже active service повторно не запускается, а после фактического
+start успех выводится только после active check. Stop выполняет штатный stop и
+считает действие успешным только при подтверждённом конечном state `inactive`;
+`failed` и другие состояния не маскируются под успех. Прямые CLI-вызовы не
+требуют confirmation. Manager не выполняет auto-sudo, не затрагивает Web Admin
+и не меняет enable/disable boot policy.
+
 При запуске `kanami` без аргументов интерактивное меню открывается только когда
 stdin и stdout являются TTY. В pipeline, cron и CI manager показывает help и не
 ожидает input. Явная команда `kanami menu` сохраняет пункты 1–4 для Status,
-Doctor, Version и Help, оставляет `5. Restart bot`, добавляет `6. Logs` и
-сохраняет `0. Exit`. Logs в menu использует default 100 и после завершения или
-ошибки возвращает пользователя в menu без confirmation.
+Doctor, Version и Help, оставляет `5. Restart bot` и `6. Logs`, добавляет
+`7. Start bot` и `8. Stop bot` и сохраняет `0. Exit`. Logs в menu использует
+default 100 и после завершения или ошибки возвращает пользователя в menu без
+confirmation. Menu Start также не требует confirmation. Menu Stop требует
+`y`, `Y`, `yes` или `YES`; пустой ввод, любой другой ответ и EOF отменяют stop.
 Menu restart требует отдельного подтверждения: `y`, `Y`, `yes` или `YES`
 подтверждают restart; пустой ввод, любой другой ответ и EOF отменяют действие.
 Ошибка restart показывается без аварийного закрытия menu.
 
 Manager не читает env-файлы и пока не выполняет PostgreSQL, Alembic или HTTP
-проверки. Start/stop/update/install, Web Admin restart, backup/restore/rollback
-и другие lifecycle actions пока отсутствуют.
+проверки. Update/install, Web Admin lifecycle, enable/disable,
+backup/restore/rollback и другие lifecycle actions пока отсутствуют.
 
 ## Автоматизированная установка
 
