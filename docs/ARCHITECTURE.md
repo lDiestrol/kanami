@@ -1301,9 +1301,10 @@ reacceptance workflow намеренно отложены.
   `/usr/local/bin/kanami`. D2.1 добавил `help`/`version`, а D2.2 — read-only
   `status`/`doctor`; manager не требует root, не читает environment-файлы и не
   вводит фиктивный semver. Git-команды выполняются без optional locks, systemd
-  используется только через обычный `systemctl show`/`is-active`, а fake
-  systemctl в hermetic tests подставляется только через `PATH`. Read-only пути
-  имеют узкие test overrides, которые нельзя переносить в будущие write actions.
+  для read-only диагностик вызывается через обычные `systemctl show` и
+  `systemctl is-active`, а fake systemctl в hermetic tests подставляется только
+  через `PATH`. Read-only пути имеют узкие test overrides, которые нельзя
+  переносить в write actions.
 - Основной checkout, bot executable, uv bootstrap/cache, `kanami.service` и его
   active-state являются обязательными doctor checks. Web Admin остаётся
   отдельным optional deployment: отсутствие его executable/unit или inactive
@@ -1320,10 +1321,19 @@ reacceptance workflow намеренно отложены.
   fast-forward pull и до dependency sync refresh-ит эту копию только из
   committed `/opt/kanami/scripts/manager.sh`. Missing, unreadable, non-regular
   или symlink source является fail-fast ошибкой без post-pull rollback.
-- Menu является только presentation loop над существующими read-only
-  status/doctor/version/help functions. Неявный запуск меню требует TTY на stdin
-  и stdout; non-TTY запуск без аргументов показывает help, invalid input
-  повторяет меню, EOF завершается успешно. Lifecycle actions в D2.3 отсутствуют.
+- D2.5 добавляет первую узкую mutating-команду `restart`: она требует `EUID=0`,
+  использует фиксированный `/usr/bin/systemctl`, принимает только подтверждённый
+  `LoadState=loaded`, перезапускает только `kanami.service` и объявляет успех
+  лишь после `is-active --quiet`. Manager не выполняет auto-sudo и не использует
+  read-only path overrides или PATH как authority для mutation. Optional
+  `kanami-web-admin.service` не входит в restart semantics.
+- Menu остаётся presentation loop: пункты 1–4 вызывают существующие read-only
+  status/doctor/version/help functions, `0` завершает menu, а новый пункт
+  `5. Restart bot` требует отдельного positive confirmation. Отмена и EOF не
+  меняют service; ошибка restart возвращает пользователя в menu. Прямой
+  `sudo kanami restart` считается явным намерением и confirmation не требует.
+  Неявный запуск menu требует TTY на stdin и stdout; non-TTY запуск без аргументов
+  показывает help, invalid input повторяет menu, EOF завершается успешно.
 - Секреты не хранятся в Git.
 - Web-панель в MVP отсутствует.
 

@@ -38,7 +38,7 @@ VM, `systemd` и локальный PostgreSQL. Предполагаются б�
 states и guild messages. Он не включает message content, typing или DM intents;
 presences включаются только через `GAME_TRACKING_ENABLED=true`.
 
-## Kanami Manager: установка и read-only меню
+## Kanami Manager: установка, диагностика и restart
 
 Новая официальная установка копирует committed `scripts/manager.sh` из
 установленного checkout в `/usr/local/bin/kanami` с owner `root:root` и mode
@@ -49,26 +49,36 @@ kanami help
 kanami version
 kanami status
 kanami doctor
+sudo kanami restart
 kanami menu
 ```
 
 Для разработки те же команды можно запускать как `bash ./scripts/manager.sh ...`.
-На этапе D2.3 manager работает только в read-only режиме. `status` показывает
-короткую сводку checkout и systemd services, а `doctor` проверяет foundation
-установки и возвращает ненулевой exit code при обязательных ошибках. Отдельный
-Web Admin остаётся optional: его отсутствие или inactive-state не делают
-основную bot installation нездоровой. Недоступные без root проверки systemd
-показываются как `WARN`/`SKIP`, а не считаются подтверждённой поломкой.
+Команды `help`, `version`, `status` и `doctor` остаются read-only и не требуют
+root. `status` показывает короткую сводку checkout и systemd services, а
+`doctor` проверяет foundation установки и возвращает ненулевой exit code при
+обязательных ошибках. Отдельный Web Admin остаётся optional: его отсутствие или
+inactive-state не делают основную bot installation нездоровой. Недоступные без
+root проверки systemd показываются как `WARN`/`SKIP`, а не считаются
+подтверждённой поломкой.
+
+Первая lifecycle-команда `sudo kanami restart` перезапускает только обязательный
+`kanami.service`, проверяет его LoadState и active-state после restart. Manager
+не запускает `sudo` сам и не перезапускает optional
+`kanami-web-admin.service`. Прямой CLI-вызов является явным намерением и не
+запрашивает дополнительное подтверждение.
 
 При запуске `kanami` без аргументов интерактивное меню открывается только когда
 stdin и stdout являются TTY. В pipeline, cron и CI manager показывает help и не
-ожидает input. Явная команда `kanami menu` принимает пункты Status, Doctor,
-Version, Help и Exit; неверный выбор возвращает в меню, а EOF завершает его
-успешно.
+ожидает input. Явная команда `kanami menu` сохраняет пункты 1–4 для Status,
+Doctor, Version и Help, добавляет `5. Restart bot` и оставляет `0. Exit`.
+Menu restart требует отдельного подтверждения: `y`, `Y`, `yes` или `YES`
+подтверждают restart; пустой ввод, любой другой ответ и EOF отменяют действие.
+Ошибка restart показывается без аварийного закрытия menu.
 
-Эти команды не читают env-файлы и пока не выполняют PostgreSQL, Alembic или HTTP
-проверки. Install/update/restart, backup/restore/rollback и другие lifecycle
-actions в меню отсутствуют.
+Manager не читает env-файлы и пока не выполняет PostgreSQL, Alembic или HTTP
+проверки. Start/stop/update/install, Web Admin restart, backup/restore/rollback
+и другие lifecycle actions пока отсутствуют.
 
 ## Автоматизированная установка
 

@@ -58,6 +58,17 @@ def write_executable(path: Path) -> None:
     path.chmod(0o755)
 
 
+def shell_function_source(name: str) -> str:
+    source = MANAGER_SCRIPT.read_text(encoding="utf-8")
+    match = re.search(
+        rf"^{re.escape(name)}\(\) \{{\n(?P<body>.*?)^\}}$",
+        source,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    assert match is not None
+    return match.group(0)
+
+
 def create_checkout(tmp_path: Path) -> Path:
     checkout = tmp_path / "checkout"
     checkout.mkdir()
@@ -175,6 +186,7 @@ def test_help_aliases_show_the_same_help(argument: str) -> None:
     assert result.stdout == default_result.stdout
     assert "status" in result.stdout
     assert "doctor" in result.stdout
+    assert "restart" in result.stdout
     assert "menu" in result.stdout
     assert result.stderr == ""
 
@@ -190,7 +202,7 @@ def test_version_shows_manager_name_and_optional_git_commit() -> None:
     )
 
 
-def test_menu_displays_only_read_only_options_and_exits() -> None:
+def test_menu_preserves_read_only_options_adds_restart_and_exits() -> None:
     result = run_manager("menu", input_text="0\n")
 
     assert result.returncode == 0
@@ -198,10 +210,11 @@ def test_menu_displays_only_read_only_options_and_exits() -> None:
     assert "2. Doctor" in result.stdout
     assert "3. Version" in result.stdout
     assert "4. Help" in result.stdout
+    assert "5. Restart bot" in result.stdout
     assert "0. Exit" in result.stdout
+    assert "Select an option [0-5]:" in result.stdout
     assert "Install" not in result.stdout
     assert "Update" not in result.stdout
-    assert "Restart" not in result.stdout
     assert "Backup" not in result.stdout
     assert "Restore" not in result.stdout
     assert "Goodbye." in result.stdout
@@ -250,7 +263,8 @@ def test_menu_help_uses_existing_help_logic() -> None:
 
     assert result.returncode == 0
     assert "Usage: kanami [command]" in result.stdout
-    assert "menu       Open the interactive read-only menu" in result.stdout
+    assert "restart    Restart the main Kanami bot service" in result.stdout
+    assert "menu       Open the interactive menu" in result.stdout
     assert "Goodbye." in result.stdout
 
 
@@ -258,7 +272,7 @@ def test_menu_invalid_choice_returns_to_menu() -> None:
     result = run_manager("menu", input_text="invalid\n0\n")
 
     assert result.returncode == 0
-    assert "Invalid choice: invalid. Select a number from 0 to 4." in result.stdout
+    assert "Invalid choice: invalid. Select a number from 0 to 5." in result.stdout
     assert result.stdout.count("1. Status") == 2
     assert "Goodbye." in result.stdout
 
@@ -270,6 +284,116 @@ def test_menu_eof_exits_successfully() -> None:
     assert "1. Status" in result.stdout
     assert "End of input; exiting." in result.stdout
     assert result.stderr == ""
+
+
+@pytest.mark.parametrize("answer", ["", "n", "N", "invalid"])
+def test_menu_restart_requires_positive_confirmation(answer: str) -> None:
+    result = run_manager("menu", input_text=f"5\n{answer}\n0\n")
+
+    assert result.returncode == 0
+    assert "Restart kanami.service? [y/N]:" in result.stdout
+    assert "Restart cancelled." in result.stdout
+    assert result.stdout.count("1. Status") == 2
+    assert "restarted successfully" not in result.stdout
+    assert "Goodbye." in result.stdout
+
+
+def test_menu_restart_confirmation_eof_is_safe() -> None:
+    result = run_manager("menu", input_text="5\n")
+
+    assert result.returncode == 0
+    assert "Restart cancelled." in result.stdout
+    assert result.stdout.count("1. Status") == 2
+    assert "End of input; exiting." in result.stdout
+    assert "restarted successfully" not in result.stdout
+
+
+def test_menu_restart_failure_returns_to_menu() -> None:
+    if not hasattr(os, "geteuid") or os.geteuid() == 0:
+        pytest.skip("behavioral root-boundary check requires a non-root host")
+
+    result = run_manager("menu", input_text="5\ny\n0\n")
+
+    assert result.returncode == 0
+    assert "restart requires root" in result.stderr
+    assert "Restart failed." in result.stdout
+    assert result.stdout.count("1. Status") == 2
+    assert "Goodbye." in result.stdout
+
+
+def test_direct_restart_rejects_non_root_without_mutation() -> None:
+    if not hasattr(os, "geteuid") or os.geteuid() == 0:
+        pytest.skip("behavioral root-boundary check requires a non-root host")
+
+    result = run_manager("restart")
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "restart requires root" in result.stderr
+    assert "sudo kanami restart" in result.stderr
+
+
+def test_restart_uses_fixed_production_boundary_and_bot_only() -> None:
+    source = MANAGER_SCRIPT.read_text(encoding="utf-8")
+    restart_source = shell_function_source("restart_bot")
+
+    assert 'readonly MUTATING_SYSTEMCTL="/usr/bin/systemctl"' in source
+    assert 'readonly BOT_SERVICE="kanami.service"' in source
+    assert "kanami-web-admin.service" not in restart_source
+    assert "KANAMI_MANAGER_INSTALL_DIR" not in restart_source
+    assert "KANAMI_MANAGER_UV_BOOTSTRAP_DIR" not in restart_source
+    assert "KANAMI_MANAGER_UV_CACHE_DIR" not in restart_source
+    assert "KANAMI_MANAGER_SYSTEMCTL" not in source
+    assert 'MUTATING_SYSTEMCTL="${' not in source
+
+
+def test_restart_enforces_root_without_privilege_escalation() -> None:
+    restart_source = shell_function_source("restart_bot")
+
+    assert "((EUID != 0))" in restart_source
+    assert not re.search(r"^\s*(?:sudo|su)\b", restart_source, re.MULTILINE)
+
+
+def test_menu_restart_only_runs_after_explicit_positive_confirmation() -> None:
+    confirmation_source = shell_function_source("confirm_restart")
+    menu_source = shell_function_source("show_menu")
+
+    assert "y | Y | yes | YES)" in confirmation_source
+    confirmation = menu_source.index("if confirm_restart; then")
+    guarded_restart = menu_source.index("if ! restart_bot; then")
+    assert confirmation < guarded_restart
+
+
+def test_restart_validates_unit_and_post_restart_active_state() -> None:
+    restart_source = shell_function_source("restart_bot")
+
+    load_check = restart_source.index("--property=LoadState --value")
+    restart_call = restart_source.index(
+        '"${MUTATING_SYSTEMCTL}" restart "${BOT_SERVICE}"'
+    )
+    active_check = restart_source.index(
+        '"${MUTATING_SYSTEMCTL}" is-active --quiet "${BOT_SERVICE}"'
+    )
+    success_message = restart_source.index("restarted successfully")
+
+    assert "masked | error | bad-setting" in restart_source
+    assert load_check < restart_call < active_check < success_message
+
+
+def test_restart_does_not_access_secrets_or_other_lifecycle_tools() -> None:
+    restart_source = shell_function_source("restart_bot")
+
+    for forbidden in (
+        "CONFIG_FILE",
+        "kanami.env",
+        "DISCORD_TOKEN",
+        "DATABASE_URL",
+        "git ",
+        "uv ",
+        "alembic",
+        "daemon-reload",
+    ):
+        assert forbidden not in restart_source
 
 
 def test_installed_manager_copy_falls_back_to_install_checkout(

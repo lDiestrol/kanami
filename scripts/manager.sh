@@ -3,6 +3,8 @@ set -Eeuo pipefail
 
 readonly PROGRAM_NAME="kanami"
 readonly MANAGER_NAME="Kanami Manager"
+readonly MUTATING_SYSTEMCTL="/usr/bin/systemctl"
+readonly BOT_SERVICE="kanami.service"
 # D2.2 read-only test seams; future mutating commands must not trust these paths.
 readonly INSTALL_DIR="${KANAMI_MANAGER_INSTALL_DIR:-/opt/kanami}"
 readonly UV_BOOTSTRAP_DIR="${KANAMI_MANAGER_UV_BOOTSTRAP_DIR:-/opt/kanami-uv}"
@@ -21,7 +23,8 @@ Commands:
   version    Show manager version information
   status     Show a short read-only installation summary
   doctor     Run detailed read-only installation diagnostics
-  menu       Open the interactive read-only menu
+  restart    Restart the main Kanami bot service
+  menu       Open the interactive menu
 EOF
 }
 
@@ -33,8 +36,29 @@ Kanami Manager
 2. Doctor
 3. Version
 4. Help
+5. Restart bot
 0. Exit
 EOF
+}
+
+confirm_restart() {
+    local answer
+
+    printf 'Restart kanami.service? [y/N]: '
+    if ! IFS= read -r answer; then
+        printf '\nRestart cancelled.\n'
+        return 1
+    fi
+    answer="${answer%$'\r'}"
+    case "${answer}" in
+        y | Y | yes | YES)
+            return 0
+            ;;
+        *)
+            printf 'Restart cancelled.\n'
+            return 1
+            ;;
+    esac
 }
 
 show_menu() {
@@ -42,7 +66,7 @@ show_menu() {
 
     while true; do
         show_menu_options
-        printf 'Select an option [0-4]: '
+        printf 'Select an option [0-5]: '
         if ! IFS= read -r choice; then
             printf '\nEnd of input; exiting.\n'
             return 0
@@ -62,12 +86,19 @@ show_menu() {
             4)
                 show_help
                 ;;
+            5)
+                if confirm_restart; then
+                    if ! restart_bot; then
+                        printf 'Restart failed.\n'
+                    fi
+                fi
+                ;;
             0)
                 printf 'Goodbye.\n'
                 return 0
                 ;;
             *)
-                printf 'Invalid choice: %s. Select a number from 0 to 4.\n' \
+                printf 'Invalid choice: %s. Select a number from 0 to 5.\n' \
                     "${choice}"
                 ;;
         esac
@@ -173,6 +204,58 @@ unit_active_state() {
             return 1
             ;;
     esac
+}
+
+restart_bot() {
+    local load_state
+
+    if ((EUID != 0)); then
+        printf '%s: restart requires root; run: sudo kanami restart\n' \
+            "${PROGRAM_NAME}" >&2
+        return 1
+    fi
+    if [[ ! -x ${MUTATING_SYSTEMCTL} ]]; then
+        printf '%s: cannot restart %s: %s is unavailable\n' \
+            "${PROGRAM_NAME}" "${BOT_SERVICE}" "${MUTATING_SYSTEMCTL}" >&2
+        return 1
+    fi
+    load_state="$("${MUTATING_SYSTEMCTL}" show "${BOT_SERVICE}" \
+        --property=LoadState --value 2>/dev/null)" || {
+        printf '%s: cannot verify %s load state\n' \
+            "${PROGRAM_NAME}" "${BOT_SERVICE}" >&2
+        return 1
+    }
+    load_state="${load_state%%$'\n'*}"
+    if [[ ${load_state} != "loaded" ]]; then
+        case "${load_state}" in
+            not-found)
+                printf '%s: cannot restart %s: unit is not installed\n' \
+                    "${PROGRAM_NAME}" "${BOT_SERVICE}" >&2
+                ;;
+            masked | error | bad-setting)
+                printf '%s: cannot restart %s: abnormal load state: %s\n' \
+                    "${PROGRAM_NAME}" "${BOT_SERVICE}" "${load_state}" >&2
+                ;;
+            *)
+                printf '%s: cannot restart %s: load state unavailable\n' \
+                    "${PROGRAM_NAME}" "${BOT_SERVICE}" >&2
+                ;;
+        esac
+        return 1
+    fi
+
+    if ! "${MUTATING_SYSTEMCTL}" restart "${BOT_SERVICE}"; then
+        printf '%s: failed to restart %s\n' \
+            "${PROGRAM_NAME}" "${BOT_SERVICE}" >&2
+        return 1
+    fi
+    if ! "${MUTATING_SYSTEMCTL}" is-active --quiet "${BOT_SERVICE}"; then
+        printf '%s: %s is not active after restart\n' \
+            "${PROGRAM_NAME}" "${BOT_SERVICE}" >&2
+        return 1
+    fi
+
+    printf '%s restarted successfully.\n' "${BOT_SERVICE}"
 }
 
 service_summary() {
@@ -476,6 +559,9 @@ main() {
             ;;
         doctor)
             show_doctor
+            ;;
+        restart)
+            restart_bot
             ;;
         menu)
             show_menu
