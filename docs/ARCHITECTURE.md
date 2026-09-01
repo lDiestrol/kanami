@@ -1299,7 +1299,22 @@ reacceptance workflow намеренно отложены.
   deployment step и не запускается application unit-ом.
 - Консервативный installer создаёт отдельные PostgreSQL database
   `discord_stats_prod` и role `kanami_app` только при отсутствии обоих; первый
-  запуск с placeholder Discord credentials запрещён операционным flow.
+  запуск остаётся ручным и следует после `kanami doctor`.
+- D2.11 собирает обязательную core-конфигурацию только интерактивно через
+  usable `/dev/tty`: Bot Token читается Bash builtin с отключённым echo,
+  остаётся неэкспортированной shell-переменной, не передаётся child process и
+  не показывается в validation/summary/log output. CLI arguments, environment
+  injection и visible-input fallback для секрета отсутствуют. Token локально
+  ограничен dotenv-safe opaque charset без привязки к длине или числу сегментов;
+  Guild ID проверяется как positive unsigned 64-bit decimal snowflake, а
+  `REPORT_TIMEZONE` — system Python `zoneinfo` при установленном `tzdata`.
+- До подтверждения wizard допускается только установка Debian packages,
+  необходимая для timezone validation; Kanami database/role, production
+  checkout и protected config ещё не создаются. После подтверждения installer
+  генерирует PostgreSQL password внутри процесса и записывает реальные core
+  values в `/etc/kanami/kanami.env` (`root:kanami`, `0640`), после чего удаляет
+  token variable. PostgreSQL password не запрашивается у оператора. Installer
+  по-прежнему не включает и не запускает bot service автоматически.
 - Update выполняется только из чистого Git tree через `git pull --ff-only`,
   locked dependency sync и migration до restart. Forced checkout/reset и
   автоматическое удаление данных не используются.

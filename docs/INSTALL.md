@@ -144,7 +144,15 @@ sudo ./scripts/install.sh
 
 Installer поддерживает именно Debian 13 и:
 
-- устанавливает `ca-certificates`, `git`, Python/venv, PostgreSQL и `openssl`;
+- до создания Kanami database, checkout и config запрашивает через обязательный
+  usable `/dev/tty` Discord Bot Token, Discord Guild ID и IANA timezone;
+- вводит Bot Token без echo, принимает только непустое значение из letters,
+  digits, `.`, `_` и `-` и никогда не показывает значение в summary;
+- валидирует Guild ID как decimal Discord snowflake в диапазоне
+  `1..18446744073709551615`, а timezone — через Python `zoneinfo`; пустой
+  timezone означает `UTC`;
+- устанавливает `ca-certificates`, `git`, Python/venv, `tzdata`, PostgreSQL и
+  `openssl`;
 - создаёт system user `kanami` без interactive login;
 - клонирует текущую checked-out branch вместе с `.git` в `/opt/kanami` и
   сохраняет исходный upstream `origin` для обновлений; production checkout,
@@ -159,15 +167,25 @@ Installer поддерживает именно Debian 13 и:
   выполняет `uv sync --frozen --no-dev`;
 - при чистой локальной PostgreSQL создаёт database `discord_stats_prod`, role
   `kanami_app` и случайный hex password;
-- создаёт `/etc/kanami/kanami.env` с mode `0640`, owner `root:kanami`;
+- после безопасного summary и подтверждения создаёт
+  `/etc/kanami/kanami.env` с готовыми обязательными core settings, mode `0640`
+  и owner `root:kanami`;
 - применяет `alembic upgrade head` и устанавливает `kanami.service`.
 
 Скрипт не перезаписывает существующий config, database, role или install tree.
 Если он видит неоднозначное частичное состояние PostgreSQL, то останавливается
 и предлагает ручную настройку вместо смены существующего password.
 
-Первый запуск намеренно остаётся ручным: installer не стартует service, пока
-`DISCORD_TOKEN` и `DISCORD_GUILD_ID` являются placeholders.
+Interactive wizard не принимает Bot Token через argument, CLI option или
+environment variable и не имеет visible-input fallback. Без usable `/dev/tty`
+installer завершается до установки packages и до создания production state.
+Packages устанавливаются до окончательной локальной проверки timezone; отказ на
+`Continue installation? [Y/n]` не откатывает packages, но происходит до
+создания Kanami database, `/opt/kanami` и `/etc/kanami/kanami.env`.
+
+Первый запуск намеренно остаётся ручным: installer не включает и не стартует
+bot service автоматически. Сначала оператор проверяет production trust через
+`kanami doctor`.
 
 Для production рекомендуется устанавливать поддерживаемую branch, обычно
 `main`; installer не хардкодит её и сохраняет branch исходного checkout.
@@ -178,17 +196,13 @@ key или token в `kanami.env`, repository и примеры команд.
 
 ## Конфигурация
 
-Откройте защищённый env-файл:
+Installer уже записывает реальные `DISCORD_TOKEN`, `DISCORD_GUILD_ID`,
+`REPORT_TIMEZONE` и сгенерированный `DATABASE_URL`; ручной замены обязательных
+placeholder values больше нет. Для optional settings откройте защищённый
+env-файл:
 
 ```bash
 sudoedit /etc/kanami/kanami.env
-```
-
-Замените:
-
-```dotenv
-DISCORD_TOKEN=replace_me
-DISCORD_GUILD_ID=123456789012345678
 ```
 
 Не меняйте сгенерированный `DATABASE_URL`, если не переносите PostgreSQL.
@@ -237,9 +251,10 @@ unset DATABASE_URL
 Затем включите service:
 
 ```bash
-sudo systemctl enable --now kanami
-systemctl status kanami --no-pager
-journalctl -u kanami -n 100 --no-pager
+kanami doctor
+sudo systemctl enable kanami
+sudo kanami start
+kanami logs
 ```
 
 Unit запускает `/opt/kanami/.venv/bin/discord-stats-bot` от пользователя

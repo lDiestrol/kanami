@@ -69,6 +69,13 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что уже выполнено
 
+- D2.11: installer заменил обязательные Discord placeholders безопасным
+  interactive core wizard через `/dev/tty`. Bot Token читается hidden и не
+  передаётся через CLI/env или child process; Guild ID проверяется как positive
+  decimal Discord snowflake, `REPORT_TIMEZONE` — через `zoneinfo` с default
+  `UTC`. До подтверждения не создаются Kanami DB/checkout/config, PostgreSQL
+  password по-прежнему генерируется автоматически, а готовый `kanami.env`
+  сохраняет `root:kanami`/`0640`. Bot автоматически не запускается.
 - D2.10: `kanami doctor` получил отдельный read-only Production trust section и
   итог `Update readiness`. Проверяются canonical checkout, `.git`, scripts,
   updater, Manager/unit sources, fixed bash/stat и service-owned `.venv` с bot
@@ -1034,12 +1041,12 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что сейчас делается
 
-D2.10 готовится как отдельный read-only diagnostics checkpoint: doctor проверяет
-canonical production trust anchors и update readiness до попытки update. D2.9
-workflow, legacy ownership migration, rollback, backup/restore и остальные
-lifecycle функции не меняются. Старый service-user-writable checkout-local
-`update.sh` по-прежнему нельзя запускать через `sudo` до manual trust
-restoration.
+D2.11 реализует и проверяет interactive Core configuration installer: hidden
+Discord token, bounded Guild ID, IANA timezone, безопасный summary,
+confirmation/cancellation и готовый protected `kanami.env`. D2.8 root-owned
+checkout, D2.9 trusted update и D2.10 doctor semantics не меняются. Web Admin
+installer, reverse proxy, TLS/domain/OAuth и новые Manager lifecycle commands в
+этот checkpoint не входят и ещё не реализованы.
 
 WUI-4A.1 и оба responsive hotfix развёрнуты в production. Первый hotfix исправил
 расположение compact-кнопки «Профиль» справа в member row на tablet width. Второй
@@ -1403,11 +1410,11 @@ automation, settings/env, migrations и intents для `/health` не добав
 
 ## Следующие шаги
 
-1. Продолжить D2.11+ отдельными небольшими manager checkpoint-этапами без
+1. Продолжить D2.12+ отдельными небольшими installer/manager checkpoint-этапами без
    преждевременного проектирования следующей mutating команды.
    Follow/Web Admin logs, install, Web Admin lifecycle, enable/disable,
    backup/restore/rollback и PostgreSQL/Alembic/HTTP doctor probes не входят в
-   D2.10.
+   D2.11.
 2. При следующем реальном этапе Rules Compliance / reacceptance проверить
    оставшийся production scenario: Publish новой Rules version → успешный DB
    commit → automatic Bot Control sync → обновление существующего managed message

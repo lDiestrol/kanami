@@ -13,6 +13,11 @@ readonly SERVICE_USER="kanami"
 readonly DB_NAME="discord_stats_prod"
 readonly DB_ROLE="kanami_app"
 readonly UV_VERSION="0.12.3"
+readonly MAX_DISCORD_SNOWFLAKE="18446744073709551615"
+
+discord_token=""
+discord_guild_id=""
+report_timezone=""
 
 log() {
     printf '[kanami] %s\n' "$*"
@@ -41,6 +46,136 @@ install_service_unit() {
     install -m 0644 -o root -g root "${service_source}" "${SERVICE_FILE}"
 }
 
+require_configuration_tty() {
+    exec 3<>/dev/tty || \
+        fail "interactive core configuration requires a usable terminal (/dev/tty)"
+    [[ -t 3 ]] || \
+        fail "interactive core configuration requires a usable terminal (/dev/tty)"
+}
+
+is_valid_discord_token() {
+    local value="${1-}"
+
+    [[ -n ${value} && ${value} =~ ^[A-Za-z0-9._-]+$ ]]
+}
+
+is_valid_discord_guild_id() {
+    local value="${1-}"
+    local normalized
+    local LC_ALL=C
+
+    [[ ${value} =~ ^[0-9]+$ ]] || return 1
+    normalized="${value}"
+    while [[ ${normalized} == 0* ]]; do
+        normalized="${normalized#0}"
+    done
+    [[ -n ${normalized} ]] || return 1
+    ((${#normalized} < ${#MAX_DISCORD_SNOWFLAKE})) && return 0
+    ((${#normalized} == ${#MAX_DISCORD_SNOWFLAKE})) || return 1
+    [[ ${normalized} < ${MAX_DISCORD_SNOWFLAKE} || \
+        ${normalized} == "${MAX_DISCORD_SNOWFLAKE}" ]]
+}
+
+is_valid_report_timezone() {
+    local value="${1-}"
+
+    [[ -n ${value} && ${value} != *[[:space:]]* ]] || return 1
+    python3 - "${value}" <<'PY'
+import sys
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+try:
+    ZoneInfo(sys.argv[1])
+except (ValueError, ZoneInfoNotFoundError):
+    raise SystemExit(1)
+PY
+}
+
+read_hidden_token() {
+    while true; do
+        printf 'Discord Bot Token: ' >&3
+        if ! IFS= read -r -s -u 3 discord_token; then
+            printf '\n' >&3
+            fail "could not read Discord Bot Token from the terminal"
+        fi
+        printf '\n' >&3
+        if is_valid_discord_token "${discord_token}"; then
+            return 0
+        fi
+        printf '%s\n' \
+            "Invalid Discord Bot Token: enter a non-empty token containing only letters, digits, '.', '_' and '-'." \
+            >&3
+    done
+}
+
+read_discord_guild_id() {
+    while true; do
+        printf 'Discord Guild ID: ' >&3
+        if ! IFS= read -r -u 3 discord_guild_id; then
+            fail "could not read Discord Guild ID from the terminal"
+        fi
+        if is_valid_discord_guild_id "${discord_guild_id}"; then
+            return 0
+        fi
+        printf '%s\n' \
+            "Invalid Discord Guild ID: enter decimal digits from 1 to ${MAX_DISCORD_SNOWFLAKE}." \
+            >&3
+    done
+}
+
+read_report_timezone() {
+    local entered_timezone
+
+    printf 'Report timezone [UTC]: ' >&3
+    if ! IFS= read -r -u 3 entered_timezone; then
+        fail "could not read report timezone from the terminal"
+    fi
+    report_timezone="${entered_timezone:-UTC}"
+}
+
+validate_report_timezone() {
+    while ! is_valid_report_timezone "${report_timezone}"; do
+        printf '%s\n' \
+            'Invalid report timezone: enter an existing IANA timezone such as UTC or Europe/Stockholm.' \
+            >&3
+        read_report_timezone
+    done
+}
+
+show_configuration_summary() {
+    printf '%s\n' \
+        '' \
+        'Kanami core configuration' \
+        'Discord Bot Token: configured (hidden)' \
+        "Discord Guild ID: ${discord_guild_id}" \
+        "Report timezone: ${report_timezone}" \
+        '' >&3
+}
+
+confirm_installation() {
+    local answer
+
+    while true; do
+        printf 'Continue installation? [Y/n]: ' >&3
+        if ! IFS= read -r -u 3 answer; then
+            fail "could not read installation confirmation from the terminal"
+        fi
+        case ${answer} in
+            "" | y | Y | yes | YES)
+                return 0
+                ;;
+            n | N | no | NO)
+                return 1
+                ;;
+            *)
+                printf '%s\n' 'Please answer yes or no.' >&3
+                ;;
+        esac
+    done
+}
+
+main() {
+    set +x
 [[ ${EUID} -eq 0 ]] || fail "run this installer with sudo"
 
 readonly SOURCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -64,12 +199,28 @@ source /etc/os-release
 [[ ! -e "${CONFIG_FILE}" ]] || \
     fail "${CONFIG_FILE} already exists; it will not be overwritten"
 
+require_configuration_tty
+printf '%s\n' '' 'Kanami core configuration' '' >&3
+read_hidden_token
+read_discord_guild_id
+read_report_timezone
+
 log "Installing Debian packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends \
     ca-certificates git openssl postgresql postgresql-client \
-    python3 python3-pip python3-venv
+    python3 python3-pip python3-venv tzdata
+
+validate_report_timezone
+show_configuration_summary
+if ! confirm_installation; then
+    unset discord_token
+    exec 3>&-
+    log "Installation cancelled before creating Kanami database, checkout, or configuration"
+    return 0
+fi
+exec 3>&-
 
 log "Starting local PostgreSQL"
 systemctl enable --now postgresql
@@ -141,14 +292,13 @@ runuser -u postgres -- createdb --owner="${DB_ROLE}" "${DB_NAME}"
 
 database_url="postgresql+asyncpg://${DB_ROLE}:${db_password}@127.0.0.1:5432/${DB_NAME}"
 
-log "Writing protected configuration template"
+log "Writing protected core configuration"
 install -d -m 0750 -o root -g "${SERVICE_USER}" "${CONFIG_DIR}"
 install -m 0640 -o root -g "${SERVICE_USER}" /dev/null "${CONFIG_FILE}"
 {
+    printf 'DISCORD_TOKEN=%s\n' "${discord_token}"
+    printf 'DISCORD_GUILD_ID=%s\n' "${discord_guild_id}"
     printf '%s\n' \
-        '# Discord credentials: replace both placeholders before starting Kanami.' \
-        'DISCORD_TOKEN=replace_me' \
-        'DISCORD_GUILD_ID=123456789012345678' \
         '' \
         '# Optional Discord features; uncomment and set an ID to enable.' \
         '# DISCORD_AUDIT_LOG_CHANNEL_ID=123456789012345678' \
@@ -157,8 +307,8 @@ install -m 0640 -o root -g "${SERVICE_USER}" /dev/null "${CONFIG_FILE}"
         '# DISCORD_RETURN_CHANNEL_ID=123456789012345678' \
         ''
     printf 'DATABASE_URL=%s\n' "${database_url}"
+    printf 'REPORT_TIMEZONE=%s\n' "${report_timezone}"
     printf '%s\n' \
-        'REPORT_TIMEZONE=UTC' \
         'VOICE_MIN_SESSION_SECONDS=10' \
         'VOICE_CHECKPOINT_INTERVAL_SECONDS=60' \
         'MEMBER_RETURN_MIN_ABSENCE_SECONDS=86400' \
@@ -167,6 +317,7 @@ install -m 0640 -o root -g "${SERVICE_USER}" /dev/null "${CONFIG_FILE}"
         'SERVER_EVENT_RETENTION_DAYS=365' \
         'LOG_LEVEL=INFO'
 } >"${CONFIG_FILE}"
+unset discord_token
 unset db_password
 
 log "Applying Alembic migrations"
@@ -187,8 +338,13 @@ systemctl daemon-reload
 
 log "Installation complete. Next steps:"
 printf '%s\n' \
-    "  1. sudoedit ${CONFIG_FILE}" \
-    "  2. Replace DISCORD_TOKEN and DISCORD_GUILD_ID placeholders" \
-    "  3. sudo systemctl enable --now kanami" \
-    "  4. systemctl status kanami --no-pager" \
-    "  5. journalctl -u kanami -n 100 --no-pager"
+    "  1. kanami doctor" \
+    "  2. Review ${CONFIG_FILE} with sudoedit if optional settings are needed" \
+    "  3. sudo systemctl enable kanami" \
+    "  4. sudo kanami start" \
+    "  5. kanami logs"
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    main "$@"
+fi
