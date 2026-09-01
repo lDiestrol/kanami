@@ -8,6 +8,7 @@ readonly SERVICE_HOME="/var/lib/kanami"
 readonly CONFIG_DIR="/etc/kanami"
 readonly CONFIG_FILE="${CONFIG_DIR}/kanami.env"
 readonly SERVICE_FILE="/etc/systemd/system/kanami.service"
+readonly MANAGER_FILE="/usr/local/bin/kanami"
 readonly SERVICE_USER="kanami"
 readonly DB_NAME="discord_stats_prod"
 readonly DB_ROLE="kanami_app"
@@ -20,6 +21,14 @@ log() {
 fail() {
     printf '[kanami] ERROR: %s\n' "$*" >&2
     exit 1
+}
+
+install_manager() {
+    local manager_source="${INSTALL_DIR}/scripts/manager.sh"
+
+    [[ -f ${manager_source} ]] || \
+        fail "installed checkout is missing scripts/manager.sh"
+    install -m 0755 -o root -g root "${manager_source}" "${MANAGER_FILE}"
 }
 
 [[ ${EUID} -eq 0 ]] || fail "run this installer with sudo"
@@ -153,6 +162,9 @@ log "Applying Alembic migrations"
         "${INSTALL_DIR}/.venv/bin/alembic" -c alembic.ini upgrade head
 )
 unset database_url
+
+log "Installing Kanami Manager command"
+install_manager
 
 log "Installing systemd unit without starting the bot"
 install -m 0644 "${INSTALL_DIR}/deploy/kanami.service" "${SERVICE_FILE}"

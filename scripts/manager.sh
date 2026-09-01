@@ -21,7 +21,66 @@ Commands:
   version    Show manager version information
   status     Show a short read-only installation summary
   doctor     Run detailed read-only installation diagnostics
+  menu       Open the interactive read-only menu
 EOF
+}
+
+show_menu_options() {
+    cat <<'EOF'
+Kanami Manager
+
+1. Status
+2. Doctor
+3. Version
+4. Help
+0. Exit
+EOF
+}
+
+show_menu() {
+    local choice
+
+    while true; do
+        show_menu_options
+        printf 'Select an option [0-4]: '
+        if ! IFS= read -r choice; then
+            printf '\nEnd of input; exiting.\n'
+            return 0
+        fi
+        choice="${choice%$'\r'}"
+        printf '\n'
+        case "${choice}" in
+            1)
+                show_status
+                ;;
+            2)
+                show_doctor || true
+                ;;
+            3)
+                show_version
+                ;;
+            4)
+                show_help
+                ;;
+            0)
+                printf 'Goodbye.\n'
+                return 0
+                ;;
+            *)
+                printf 'Invalid choice: %s. Select a number from 0 to 4.\n' \
+                    "${choice}"
+                ;;
+        esac
+        printf '\n'
+    done
+}
+
+is_kanami_checkout_candidate() {
+    local candidate="$1"
+
+    [[ -f "${candidate}/pyproject.toml" ]] && \
+        [[ -f "${candidate}/scripts/manager.sh" ]] && \
+        [[ -f "${candidate}/deploy/kanami.service" ]]
 }
 
 checkout_path() {
@@ -35,7 +94,7 @@ checkout_path() {
 
     script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
     source_checkout="$(cd -- "${script_dir}/.." && pwd)"
-    if [[ -f "${source_checkout}/pyproject.toml" ]]; then
+    if is_kanami_checkout_candidate "${source_checkout}"; then
         printf '%s\n' "${source_checkout}"
     else
         printf '%s\n' "${INSTALL_DIR}"
@@ -393,7 +452,17 @@ unknown_command() {
 }
 
 main() {
-    local command="${1:-help}"
+    local command
+
+    if (($# == 0)); then
+        if [[ -t 0 && -t 1 ]]; then
+            show_menu
+        else
+            show_help
+        fi
+        return 0
+    fi
+    command="$1"
 
     case "${command}" in
         help | -h | --help)
@@ -407,6 +476,9 @@ main() {
             ;;
         doctor)
             show_doctor
+            ;;
+        menu)
+            show_menu
             ;;
         *)
             unknown_command "${command}"

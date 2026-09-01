@@ -23,18 +23,22 @@ pytestmark = pytest.mark.skipif(
 def run_manager(
     *arguments: str,
     environment: dict[str, str] | None = None,
+    input_text: str | None = None,
+    script: Path = MANAGER_SCRIPT,
 ) -> subprocess.CompletedProcess[str]:
     assert BASH is not None
     process_environment = os.environ.copy()
     if environment is not None:
         process_environment.update(environment)
     return subprocess.run(
-        [BASH, str(MANAGER_SCRIPT), *arguments],
+        [BASH, str(script), *arguments],
         cwd=REPOSITORY_ROOT,
         env=process_environment,
         check=False,
         capture_output=True,
+        input=input_text,
         text=True,
+        timeout=10,
     )
 
 
@@ -152,12 +156,13 @@ def healthy_installation(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     return checkout, environment
 
 
-def test_no_arguments_shows_help() -> None:
-    result = run_manager()
+def test_no_arguments_in_non_tty_shows_help_without_blocking() -> None:
+    result = run_manager(input_text="")
 
     assert result.returncode == 0
     assert "Kanami Manager" in result.stdout
     assert "Usage: kanami [command]" in result.stdout
+    assert "Select an option" not in result.stdout
     assert result.stderr == ""
 
 
@@ -170,6 +175,7 @@ def test_help_aliases_show_the_same_help(argument: str) -> None:
     assert result.stdout == default_result.stdout
     assert "status" in result.stdout
     assert "doctor" in result.stdout
+    assert "menu" in result.stdout
     assert result.stderr == ""
 
 
@@ -182,6 +188,147 @@ def test_version_shows_manager_name_and_optional_git_commit() -> None:
         r"Kanami Manager\n(?:Git commit: [0-9a-f]+\n)?",
         result.stdout,
     )
+
+
+def test_menu_displays_only_read_only_options_and_exits() -> None:
+    result = run_manager("menu", input_text="0\n")
+
+    assert result.returncode == 0
+    assert "1. Status" in result.stdout
+    assert "2. Doctor" in result.stdout
+    assert "3. Version" in result.stdout
+    assert "4. Help" in result.stdout
+    assert "0. Exit" in result.stdout
+    assert "Install" not in result.stdout
+    assert "Update" not in result.stdout
+    assert "Restart" not in result.stdout
+    assert "Backup" not in result.stdout
+    assert "Restore" not in result.stdout
+    assert "Goodbye." in result.stdout
+
+
+def test_menu_status_uses_existing_status_logic(
+    healthy_installation: tuple[Path, dict[str, str]],
+) -> None:
+    checkout, environment = healthy_installation
+
+    result = run_manager("menu", environment=environment, input_text="1\n0\n")
+
+    assert result.returncode == 0
+    assert "Kanami Manager status" in result.stdout
+    assert f"Checkout path: {checkout}" in result.stdout
+    assert "kanami.service: active" in result.stdout
+    assert "Goodbye." in result.stdout
+
+
+def test_menu_doctor_failure_returns_to_menu_and_can_exit(
+    healthy_installation: tuple[Path, dict[str, str]],
+) -> None:
+    _, environment = healthy_installation
+    environment["KANAMI_TEST_BOT_ACTIVE_STATE"] = "inactive"
+
+    result = run_manager("menu", environment=environment, input_text="2\n0\n")
+
+    assert result.returncode == 0
+    assert "Kanami Manager doctor" in result.stdout
+    assert "Overall: UNHEALTHY" in result.stdout
+    assert result.stdout.count("1. Status") == 2
+    assert "Goodbye." in result.stdout
+
+
+def test_menu_version_uses_existing_version_logic() -> None:
+    result = run_manager("menu", input_text="3\n0\n")
+
+    assert result.returncode == 0
+    assert "Git commit:" in result.stdout
+    assert result.stdout.count("Kanami Manager") == 3
+    assert "Goodbye." in result.stdout
+
+
+def test_menu_help_uses_existing_help_logic() -> None:
+    result = run_manager("menu", input_text="4\n0\n")
+
+    assert result.returncode == 0
+    assert "Usage: kanami [command]" in result.stdout
+    assert "menu       Open the interactive read-only menu" in result.stdout
+    assert "Goodbye." in result.stdout
+
+
+def test_menu_invalid_choice_returns_to_menu() -> None:
+    result = run_manager("menu", input_text="invalid\n0\n")
+
+    assert result.returncode == 0
+    assert "Invalid choice: invalid. Select a number from 0 to 4." in result.stdout
+    assert result.stdout.count("1. Status") == 2
+    assert "Goodbye." in result.stdout
+
+
+def test_menu_eof_exits_successfully() -> None:
+    result = run_manager("menu", input_text="")
+
+    assert result.returncode == 0
+    assert "1. Status" in result.stdout
+    assert "End of input; exiting." in result.stdout
+    assert result.stderr == ""
+
+
+def test_installed_manager_copy_falls_back_to_install_checkout(
+    tmp_path: Path,
+) -> None:
+    checkout = create_checkout(tmp_path)
+    environment = create_manager_environment(tmp_path, checkout)
+    installed_manager = tmp_path / "usr-local-bin/kanami"
+    installed_manager.parent.mkdir()
+    shutil.copyfile(MANAGER_SCRIPT, installed_manager)
+    installed_manager.chmod(0o755)
+
+    result = run_manager(
+        "status",
+        environment=environment,
+        script=installed_manager,
+    )
+
+    assert result.returncode == 0
+    assert f"Checkout path: {checkout}" in result.stdout
+    assert "Git branch: main" in result.stdout
+
+    environment.pop("KANAMI_MANAGER_INSTALL_DIR")
+    default_result = run_manager(
+        "status",
+        environment=environment,
+        script=installed_manager,
+    )
+
+    assert default_result.returncode == 0
+    assert "Checkout path: /opt/kanami" in default_result.stdout
+    manager_source = MANAGER_SCRIPT.read_text(encoding="utf-8")
+    assert "${KANAMI_MANAGER_INSTALL_DIR:-/opt/kanami}" in manager_source
+
+
+def test_foreign_adjacent_pyproject_does_not_override_install_fallback(
+    tmp_path: Path,
+) -> None:
+    prefix = tmp_path / "fake-prefix"
+    installed_manager = prefix / "bin/kanami"
+    installed_manager.parent.mkdir(parents=True)
+    shutil.copyfile(MANAGER_SCRIPT, installed_manager)
+    installed_manager.chmod(0o755)
+    (prefix / "pyproject.toml").write_text(
+        '[project]\nname = "not-kanami"\n',
+        encoding="utf-8",
+    )
+
+    environment = create_manager_environment(tmp_path, tmp_path / "checkout")
+    environment.pop("KANAMI_MANAGER_INSTALL_DIR")
+    result = run_manager(
+        "status",
+        environment=environment,
+        script=installed_manager,
+    )
+
+    assert result.returncode == 0
+    assert f"Checkout path: {prefix}" not in result.stdout
+    assert "Checkout path: /opt/kanami" in result.stdout
 
 
 def test_status_for_detected_checkout(
