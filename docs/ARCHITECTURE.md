@@ -1315,9 +1315,11 @@ reacceptance workflow намеренно отложены.
   abnormal LoadState явно и не подменяет его active-state.
 - D2.3 устанавливает committed manager из уже клонированного `/opt/kanami` как
   regular file `/usr/local/bin/kanami` (`root:root`, `0755`), а не symlink на
-  source checkout. Повторный copy тем же `install -m` идемпотентен. Текущий
-  updater эту отдельную копию ещё не refresh-ит — это явное временное
-  ограничение до updater v2.
+  source checkout. Повторный copy тем же `install -m` идемпотентен. D2.4
+  устраняет временное ограничение: штатный updater сразу после успешного
+  fast-forward pull и до dependency sync refresh-ит эту копию только из
+  committed `/opt/kanami/scripts/manager.sh`. Missing, unreadable, non-regular
+  или symlink source является fail-fast ошибкой без post-pull rollback.
 - Menu является только presentation loop над существующими read-only
   status/doctor/version/help functions. Неявный запуск меню требует TTY на stdin
   и stdout; non-TTY запуск без аргументов показывает help, invalid input

@@ -41,8 +41,9 @@ production-validated. Stage 6B.3 UX/audit polish объединён с `main`, �
 на production-host и production-validated. Подготовлены
 человекочитаемая русская документация и первый официальный deployment flow для
 Debian 13 + systemd + локальный PostgreSQL. Начат D2 — Installation & Lifecycle
-v2: новая официальная установка добавляет `/usr/local/bin/kanami`, а Kanami
-Manager поддерживает read-only `help`, `version`, `status`, `doctor` и `menu`.
+v2: новая официальная установка добавляет `/usr/local/bin/kanami`, штатный
+updater refresh-ит его после pull, а Kanami Manager поддерживает read-only
+`help`, `version`, `status`, `doctor` и `menu`.
 Achievements
 доступны пользователям через guild-only `/achievements` с актуализацией
 voice/community метрик и идемпотентной выдачей. Pagination не реализована.
@@ -67,12 +68,17 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что уже выполнено
 
+- D2.4: штатный `scripts/update.sh` после успешного `git pull --ff-only` и до
+  dependency sync refresh-ит regular `/usr/local/bin/kanami` только из
+  `/opt/kanami/scripts/manager.sh` через `install -m 0755 -o root -g root`.
+  Missing/unreadable/non-regular или symlink source останавливает update до uv,
+  Alembic и restart; rollback checkout намеренно не добавлен.
 - D2.3: installer идемпотентно копирует committed manager из `/opt/kanami` в
   `/usr/local/bin/kanami` как regular `root:root` file с mode `0755`. Добавлено
   read-only Bash menu только с Status/Doctor/Version/Help/Exit: no-args открывает
   его лишь при TTY stdin+stdout, non-TTY показывает help, invalid choice
-  повторяет меню, EOF безопасно завершает его. Updater v2 и refresh установленной
-  manager-копии текущим `update.sh` ещё не реализованы.
+  повторяет меню, EOF безопасно завершает его. Lifecycle commands и полноценный
+  updater v2 ещё не реализованы.
 - D2.2: добавлены read-only `status` и `doctor`. Диагностика проверяет checkout,
   Git repository/cleanliness/origin, bot и optional Web Admin executables, uv
   bootstrap/cache, наличие и active-state обоих systemd units. Обязательные
@@ -982,9 +988,9 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что сейчас делается
 
-D2.3 подготовлен как отдельный checkpoint установки и read-only menu Kanami
-Manager. Текущий scope не включает updater v2, lifecycle actions, PostgreSQL,
-Alembic и HTTP probes.
+D2.4 подготовлен как отдельный checkpoint автоматического refresh установленной
+manager-копии штатным updater. Текущий scope не включает lifecycle actions,
+rollback, PostgreSQL/Alembic/HTTP doctor probes или backup/restore.
 
 WUI-4A.1 и оба responsive hotfix развёрнуты в production. Первый hotfix исправил
 расположение compact-кнопки «Профиль» справа в member row на tablet width. Второй
@@ -1263,7 +1269,8 @@ automation, settings/env, migrations и intents для `/health` не добав
   требует root и не объявляет release version до появления version lifecycle.
   Doctor считает основной bot deployment обязательным, а отдельный Web Admin —
   optional; hermetic tests подменяют read-only manager paths и `PATH`. Installer
-  создаёт regular root-owned copy, а текущий updater её пока не обновляет.
+  создаёт regular root-owned copy, а updater после успешного pull refresh-ит её
+  из канонического installed checkout до dependency/migration/restart stages.
 - Миграции выполняются отдельной командой; приложение не запускает Alembic автоматически.
 - Lifecycle имеет единую точку запуска, graceful shutdown и централизованное управление background tasks.
 - Штатный SIGINT завершается успешно только после async cleanup Discord client/background tasks и database engine; entrypoint подавляет соответствующий `KeyboardInterrupt`, но не произвольную cancellation или runtime exceptions.
@@ -1318,9 +1325,9 @@ automation, settings/env, migrations и intents для `/health` не добав
 
 ## Следующие шаги
 
-1. Продолжить D2.4+ после отдельного проектирования updater v2 и lifecycle
-   commands. Автоматический manager refresh, install/update/restart menu,
-   backup/restore/rollback и PostgreSQL/Alembic/HTTP probes не входят в D2.3.
+1. Продолжить D2.5+ после отдельного проектирования lifecycle commands.
+   Install/update/restart menu, backup/restore/rollback и PostgreSQL/Alembic/HTTP
+   doctor probes не входят в D2.4.
 2. При следующем реальном этапе Rules Compliance / reacceptance проверить
    оставшийся production scenario: Publish новой Rules version → успешный DB
    commit → automatic Bot Control sync → обновление существующего managed message

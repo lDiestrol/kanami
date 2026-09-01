@@ -211,13 +211,13 @@ sudo /opt/kanami/scripts/update.sh
 
 Скрипт проверит чистоту Git tree, выполнит fast-forward-only pull, locked
 dependency sync и Alembic migration, обновит unit, перезапустит service и
-покажет итоговый commit. При ошибке dependency/migration следующие этапы не
-выполняются. Локальные изменения, user data и config он не удаляет.
-
-Временное ограничение D2.3: существующий `scripts/update.sh` ещё не обновляет
-копию `/usr/local/bin/kanami`. После обновления checkout manager требует
-отдельного ручного refresh; автоматизация этого шага относится к будущему
-updater v2 и пока не заявляется как готовая.
+покажет итоговый commit. Сразу после успешного pull он также обновляет regular
+copy `/usr/local/bin/kanami` из committed
+`/opt/kanami/scripts/manager.sh`, сохраняя `root:root` и mode `0755`. Если этот
+source отсутствует, не является regular readable file или является symlink,
+update завершается до dependency sync, migrations и restart. При ошибке любого
+следующего этапа более поздние этапы также не выполняются. Локальные изменения,
+user data и config updater не удаляет.
 
 Backup PostgreSQL перед значимым production update остаётся ответственностью
 оператора; автоматическая backup/restore policy пока не входит в проект.

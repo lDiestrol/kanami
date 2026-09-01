@@ -7,6 +7,7 @@ readonly UV_CACHE_DIR="/var/cache/kanami/uv"
 readonly SERVICE_HOME="/var/lib/kanami"
 readonly CONFIG_FILE="/etc/kanami/kanami.env"
 readonly SERVICE_FILE="/etc/systemd/system/kanami.service"
+readonly MANAGER_FILE="/usr/local/bin/kanami"
 readonly SERVICE_USER="kanami"
 
 log() {
@@ -16,6 +17,15 @@ log() {
 fail() {
     printf '[kanami] ERROR: %s\n' "$*" >&2
     exit 1
+}
+
+refresh_manager() {
+    local manager_source="${INSTALL_DIR}/scripts/manager.sh"
+
+    [[ -f ${manager_source} && -r ${manager_source} && \
+        ! -L ${manager_source} ]] || \
+        fail "installed checkout manager source is not a regular readable file"
+    install -m 0755 -o root -g root "${manager_source}" "${MANAGER_FILE}"
 }
 
 [[ ${EUID} -eq 0 ]] || fail "run this updater with sudo"
@@ -50,6 +60,9 @@ old_commit="$(runuser -u "${SERVICE_USER}" -- env HOME="${SERVICE_HOME}" \
 log "Updating clean checkout from commit ${old_commit}"
 runuser -u "${SERVICE_USER}" -- env HOME="${SERVICE_HOME}" \
     git -C "${INSTALL_DIR}" pull --ff-only
+
+log "Refreshing Kanami Manager command"
+refresh_manager
 
 log "Synchronizing locked dependencies"
 (
