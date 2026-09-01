@@ -41,8 +41,8 @@ production-validated. Stage 6B.3 UX/audit polish объединён с `main`, �
 на production-host и production-validated. Подготовлены
 человекочитаемая русская документация и первый официальный deployment flow для
 Debian 13 + systemd + локальный PostgreSQL. Начат D2 — Installation & Lifecycle
-v2: D2.1 добавляет read-only foundation будущего Kanami Manager с командами
-`help` и `version`, без изменения текущего install/update flow. Achievements
+v2: Kanami Manager поддерживает read-only `help`, `version`, `status` и `doctor`
+без изменения текущего install/update flow. Achievements
 доступны пользователям через guild-only `/achievements` с актуализацией
 voice/community метрик и идемпотентной выдачей. Pagination не реализована.
 
@@ -66,6 +66,16 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что уже выполнено
 
+- D2.2: добавлены read-only `status` и `doctor`. Диагностика проверяет checkout,
+  Git repository/cleanliness/origin, bot и optional Web Admin executables, uv
+  bootstrap/cache, наличие и active-state обоих systemd units. Обязательные
+  ошибки дают `UNHEALTHY` и exit code 1; отсутствие или inactive-state
+  отдельного optional Web Admin отражается через `WARN`/`SKIP` и не является
+  fatal, а недоступные systemd probes не маскируются под подтверждённый FAIL.
+  Abnormal LoadState обязательного bot unit является fatal, для optional Web
+  Admin — warning. Hermetic tests используют только временные пути и fake
+  systemctl через `PATH`, не читают env-файлы и проверяют отсутствие secrets в
+  output; production override systemctl binary отсутствует.
 - D2.1: добавлен автономный Bash entrypoint `scripts/manager.sh` с
   `set -Eeuo pipefail`, предсказуемыми `help`/`-h`/`--help`, безопасным
   `version` без фиктивного semver и ненулевым exit code для неизвестной команды.
@@ -965,9 +975,9 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что сейчас делается
 
-D2 — Installation & Lifecycle v2 начат с небольшого checkpoint D2.1. Текущий
-scope ограничен фундаментом Kanami Manager; lifecycle-команды и интерактивный
-интерфейс остаются последующей работой.
+D2.2 подготовлен как отдельный read-only checkpoint Kanami Manager. Текущий
+scope ограничен installation status/doctor без PostgreSQL, Alembic и HTTP
+probes; lifecycle-команды и интерактивный интерфейс остаются последующей работой.
 
 WUI-4A.1 и оба responsive hotfix развёрнуты в production. Первый hotfix исправил
 расположение compact-кнопки «Профиль» справа в member row на tablet width. Второй
@@ -1242,8 +1252,10 @@ automation, settings/env, migrations и intents для `/health` не добав
 - Ruff используется как linter и formatter; async-тесты используют pytest-asyncio и временный PostgreSQL для DB integration tests.
 - Production пути: `/opt/kanami` для checkout, `/etc/kanami/kanami.env` для secrets/config; service работает как system user `kanami`.
 - Kanami Manager развивается как отдельный Bash entrypoint, пригодный для
-  будущей установки в `/usr/local/bin/kanami`; D2.1 остаётся read-only, не
+  будущей установки в `/usr/local/bin/kanami`; D2.2 остаётся read-only, не
   требует root и не объявляет release version до появления version lifecycle.
+  Doctor считает основной bot deployment обязательным, а отдельный Web Admin —
+  optional; hermetic tests подменяют read-only manager paths и `PATH`.
 - Миграции выполняются отдельной командой; приложение не запускает Alembic автоматически.
 - Lifecycle имеет единую точку запуска, graceful shutdown и централизованное управление background tasks.
 - Штатный SIGINT завершается успешно только после async cleanup Discord client/background tasks и database engine; entrypoint подавляет соответствующий `KeyboardInterrupt`, но не произвольную cancellation или runtime exceptions.
@@ -1298,8 +1310,9 @@ automation, settings/env, migrations и intents для `/health` не добав
 
 ## Следующие шаги
 
-1. Продолжить D2 после отдельного проектирования следующих checkpoint: установка
-   manager entrypoint, lifecycle-команды и интерактивное меню не входят в D2.1.
+1. Продолжить D2.3+ после отдельного проектирования следующих checkpoint:
+   установка manager entrypoint, lifecycle-команды, расширенные PostgreSQL/
+   Alembic/HTTP probes и интерактивное меню не входят в D2.2.
 2. При следующем реальном этапе Rules Compliance / reacceptance проверить
    оставшийся production scenario: Publish новой Rules version → успешный DB
    commit → automatic Bot Control sync → обновление существующего managed message

@@ -38,20 +38,28 @@ VM, `systemd` и локальный PostgreSQL. Предполагаются б�
 states и guild messages. Он не включает message content, typing или DM intents;
 presences включаются только через `GAME_TRACKING_ENABLED=true`.
 
-## Kanami Manager foundation
+## Kanami Manager: read-only диагностика
 
-В repository появился foundation будущей управляющей команды `kanami`:
+В repository развивается foundation будущей управляющей команды `kanami`:
 
 ```bash
 bash ./scripts/manager.sh help
 bash ./scripts/manager.sh version
+bash ./scripts/manager.sh status
+bash ./scripts/manager.sh doctor
 ```
 
-На этом этапе manager работает только в read-only режиме: запуск без аргументов
-показывает справку, а из команд реализованы только `help` и `version`. Установка
-как `/usr/local/bin/kanami`, интерактивное меню и lifecycle-команды появятся в
-последующих этапах; текущие install/update scripts остаются основным deployment
-flow.
+На этапе D2.2 manager работает только в read-only режиме. `status` показывает
+короткую сводку checkout и systemd services, а `doctor` проверяет foundation
+установки и возвращает ненулевой exit code при обязательных ошибках. Отдельный
+Web Admin остаётся optional: его отсутствие или inactive-state не делают
+основную bot installation нездоровой. Недоступные без root проверки systemd
+показываются как `WARN`/`SKIP`, а не считаются подтверждённой поломкой.
+
+Эти команды не читают env-файлы и пока не выполняют PostgreSQL, Alembic или HTTP
+проверки. Установка как `/usr/local/bin/kanami`, интерактивное меню и любые
+lifecycle actions появятся в последующих этапах; текущие install/update scripts
+остаются основным deployment flow.
 
 ## Автоматизированная установка
 

@@ -1298,10 +1298,21 @@ reacceptance workflow намеренно отложены.
   автоматическое удаление данных не используются.
 - Foundation будущего Kanami Manager — автономный Bash entrypoint
   `scripts/manager.sh`, рассчитанный на последующую установку как
-  `/usr/local/bin/kanami`. На этапе D2.1 он не требует root, не читает
-  environment-файлы и поддерживает только read-only команды `help` и `version`;
-  version не вводит фиктивный semver и opportunistically показывает commit
-  только из известного Git checkout.
+  `/usr/local/bin/kanami`. D2.1 добавил `help`/`version`, а D2.2 — read-only
+  `status`/`doctor`; manager не требует root, не читает environment-файлы и не
+  вводит фиктивный semver. Git-команды выполняются без optional locks, systemd
+  используется только через обычный `systemctl show`/`is-active`, а fake
+  systemctl в hermetic tests подставляется только через `PATH`. Read-only пути
+  имеют узкие test overrides, которые нельзя переносить в будущие write actions.
+- Основной checkout, bot executable, uv bootstrap/cache, `kanami.service` и его
+  active-state являются обязательными doctor checks. Web Admin остаётся
+  отдельным optional deployment: отсутствие его executable/unit или inactive
+  service даёт `WARN`/`SKIP`, но само по себе не делает результат `UNHEALTHY`.
+  Недоступная из-за command/permissions systemd-проверка также остаётся
+  `WARN`/`SKIP`; fatal считается только подтверждённое нарушение обязательной
+  проверки. LoadState `masked`/`error`/`bad-setting` является fatal для
+  обязательного bot unit и warning для optional Web Admin; status показывает
+  abnormal LoadState явно и не подменяет его active-state.
 - Секреты не хранятся в Git.
 - Web-панель в MVP отсутствует.
 
