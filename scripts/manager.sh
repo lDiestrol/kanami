@@ -8,12 +8,18 @@ readonly BOT_SERVICE="kanami.service"
 readonly JOURNALCTL="/usr/bin/journalctl"
 readonly DEFAULT_LOG_LINES=100
 readonly MAX_LOG_LINES=1000
+readonly UPDATE_CHECKOUT="/opt/kanami"
+readonly UPDATE_SCRIPTS_DIR="/opt/kanami/scripts"
+readonly UPDATE_SCRIPT="/opt/kanami/scripts/update.sh"
+readonly UPDATE_BASH="/usr/bin/bash"
+readonly UPDATE_STAT="/usr/bin/stat"
 # D2.2 read-only test seams; future mutating commands must not trust these paths.
 readonly INSTALL_DIR="${KANAMI_MANAGER_INSTALL_DIR:-/opt/kanami}"
 readonly UV_BOOTSTRAP_DIR="${KANAMI_MANAGER_UV_BOOTSTRAP_DIR:-/opt/kanami-uv}"
 readonly UV_CACHE_DIR="${KANAMI_MANAGER_UV_CACHE_DIR:-/var/cache/kanami/uv}"
 
 DOCTOR_FAILURES=0
+UPDATE_INVOKED=0
 
 show_help() {
     cat <<'EOF'
@@ -30,9 +36,11 @@ Commands:
   restart    Restart the main Kanami bot service
   start      Start the main Kanami bot service
   stop       Stop the main Kanami bot service
+  update     Run the trusted production updater
   menu       Open the interactive menu
 
 Logs usage: kanami logs [--lines N]
+Update usage: sudo kanami update
 EOF
 }
 
@@ -48,6 +56,7 @@ Kanami Manager
 6. Logs
 7. Start bot
 8. Stop bot
+9. Update
 0. Exit
 EOF
 }
@@ -92,12 +101,33 @@ confirm_stop() {
     esac
 }
 
+confirm_update() {
+    local answer
+
+    printf 'Run Kanami update? [y/N]: '
+    if ! IFS= read -r answer; then
+        printf '\nUpdate cancelled.\n'
+        return 1
+    fi
+    answer="${answer%$'\r'}"
+    case "${answer}" in
+        y | Y | yes | YES)
+            return 0
+            ;;
+        *)
+            printf 'Update cancelled.\n'
+            return 1
+            ;;
+    esac
+}
+
 show_menu() {
     local choice
+    local update_status
 
     while true; do
         show_menu_options
-        printf 'Select an option [0-8]: '
+        printf 'Select an option [0-9]: '
         if ! IFS= read -r choice; then
             printf '\nEnd of input; exiting.\n'
             return 0
@@ -141,12 +171,36 @@ show_menu() {
                     fi
                 fi
                 ;;
+            9)
+                if confirm_update; then
+                    update_status=0
+                    if run_update; then
+                        update_status=0
+                    else
+                        update_status=$?
+                    fi
+                    if ((UPDATE_INVOKED == 1)); then
+                        if ((update_status == 0)); then
+                            printf 'Update completed.\n'
+                        else
+                            printf 'Update failed with exit code %d; installation may be partially updated.\n' \
+                                "${update_status}" >&2
+                            printf 'Review the updater output, then run kanami status and kanami doctor.\n' \
+                                >&2
+                        fi
+                        printf 'The installed Manager may have been refreshed; ending this menu session.\n'
+                        printf "Run 'kanami' again to start a fresh menu session.\n"
+                        return "${update_status}"
+                    fi
+                    printf 'Update was not started.\n'
+                fi
+                ;;
             0)
                 printf 'Goodbye.\n'
                 return 0
                 ;;
             *)
-                printf 'Invalid choice: %s. Select a number from 0 to 8.\n' \
+                printf 'Invalid choice: %s. Select a number from 0 to 9.\n' \
                     "${choice}"
                 ;;
         esac
@@ -305,6 +359,101 @@ lifecycle_usage_error() {
         "${PROGRAM_NAME}" "${action}" >&2
     printf 'Usage: sudo %s %s\n' "${PROGRAM_NAME}" "${action}" >&2
     return 2
+}
+
+validate_update_path_metadata() {
+    local path="$1"
+    local label="$2"
+    local metadata
+    local uid
+    local gid
+    local mode
+    local extra
+
+    metadata="$("${UPDATE_STAT}" --format='%u %g %a' -- "${path}")" || {
+        printf '%s: update trust check failed: cannot inspect %s\n' \
+            "${PROGRAM_NAME}" "${label}" >&2
+        return 1
+    }
+    IFS=' ' read -r uid gid mode extra <<< "${metadata}"
+    if [[ ! ${uid} =~ ^[0-9]+$ || ! ${gid} =~ ^[0-9]+$ || \
+        ! ${mode} =~ ^[0-7]{3,4}$ || -n ${extra} ]]; then
+        printf '%s: update trust check failed: invalid metadata for %s\n' \
+            "${PROGRAM_NAME}" "${label}" >&2
+        return 1
+    fi
+    if [[ ${uid} != "0" || ${gid} != "0" ]]; then
+        printf '%s: update trust check failed: %s must be owned by UID 0 and GID 0\n' \
+            "${PROGRAM_NAME}" "${label}" >&2
+        return 1
+    fi
+    if (((8#${mode} & 8#022) != 0)); then
+        printf '%s: update trust check failed: %s is writable by group or other\n' \
+            "${PROGRAM_NAME}" "${label}" >&2
+        return 1
+    fi
+}
+
+validate_update_directory() {
+    local path="$1"
+    local label="$2"
+
+    if [[ ! -d ${path} ]]; then
+        printf '%s: update trust check failed: %s is missing or is not a directory\n' \
+            "${PROGRAM_NAME}" "${label}" >&2
+        return 1
+    fi
+    if [[ -L ${path} ]]; then
+        printf '%s: update trust check failed: %s must not be a symlink\n' \
+            "${PROGRAM_NAME}" "${label}" >&2
+        return 1
+    fi
+    validate_update_path_metadata "${path}" "${label}"
+}
+
+validate_update_script() {
+    if [[ ! -f ${UPDATE_SCRIPT} || ! -r ${UPDATE_SCRIPT} ]]; then
+        printf '%s: update trust check failed: updater is missing or is not a readable regular file\n' \
+            "${PROGRAM_NAME}" >&2
+        return 1
+    fi
+    if [[ -L ${UPDATE_SCRIPT} ]]; then
+        printf '%s: update trust check failed: updater must not be a symlink\n' \
+            "${PROGRAM_NAME}" >&2
+        return 1
+    fi
+    validate_update_path_metadata "${UPDATE_SCRIPT}" "updater"
+}
+
+validate_update_bootstrap_trust() {
+    validate_update_directory "${UPDATE_CHECKOUT}" "production checkout" || \
+        return 1
+    validate_update_directory "${UPDATE_SCRIPTS_DIR}" "scripts directory" || \
+        return 1
+    validate_update_script
+}
+
+run_update() {
+    UPDATE_INVOKED=0
+    if (( EUID != 0 )); then
+        printf '%s: update requires root; run: sudo %s update\n' \
+            "${PROGRAM_NAME}" "${PROGRAM_NAME}" >&2
+        return 1
+    fi
+    if [[ ! -x ${UPDATE_BASH} ]]; then
+        printf '%s: cannot update: %s is unavailable\n' \
+            "${PROGRAM_NAME}" "${UPDATE_BASH}" >&2
+        return 1
+    fi
+    if [[ ! -x ${UPDATE_STAT} ]]; then
+        printf '%s: cannot update: %s is unavailable\n' \
+            "${PROGRAM_NAME}" "${UPDATE_STAT}" >&2
+        return 1
+    fi
+    validate_update_bootstrap_trust || return 1
+
+    UPDATE_INVOKED=1
+    "${UPDATE_BASH}" "${UPDATE_SCRIPT}"
 }
 
 validate_bot_lifecycle_action() {
@@ -729,7 +878,7 @@ main() {
 
     if (($# == 0)); then
         if [[ -t 0 && -t 1 ]]; then
-            show_menu
+            show_menu || return $?
         else
             show_help
         fi
@@ -771,6 +920,14 @@ main() {
                 lifecycle_usage_error stop
             else
                 stop_bot
+            fi
+            ;;
+        update)
+            shift
+            if (($# > 0)); then
+                lifecycle_usage_error update
+            else
+                run_update
             fi
             ;;
         menu)

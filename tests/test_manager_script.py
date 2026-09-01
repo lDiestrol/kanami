@@ -200,6 +200,104 @@ esac
     return test_manager, environment, command_log
 
 
+def create_update_test_manager(
+    tmp_path: Path,
+    *,
+    updater_exit_code: int = 0,
+) -> tuple[Path, dict[str, str], Path, Path, Path]:
+    checkout = tmp_path / "opt/kanami"
+    scripts_dir = checkout / "scripts"
+    updater = scripts_dir / "update.sh"
+    scripts_dir.mkdir(parents=True)
+    updater.write_text("# trusted updater fixture\n", encoding="utf-8")
+
+    fake_bin = tmp_path / "bin"
+    fake_bash = fake_bin / "bash"
+    fake_stat = fake_bin / "stat"
+    invocation_log = tmp_path / "update-invocation.txt"
+    stat_log = tmp_path / "update-stat.txt"
+    fake_bin.mkdir()
+    fake_bash.write_text(
+        """#!/usr/bin/env bash
+set -u
+printf '%s\n' "$@" > "${KANAMI_TEST_UPDATE_INVOCATION_LOG:?}"
+printf 'fake updater stdout\n'
+printf 'fake updater stderr\n' >&2
+exit "${KANAMI_TEST_UPDATE_EXIT_CODE:?}"
+""",
+        encoding="utf-8",
+    )
+    fake_stat.write_text(
+        """#!/usr/bin/env bash
+set -u
+path="${!#}"
+printf '%s\n' "${path}" >> "${KANAMI_TEST_UPDATE_STAT_LOG:?}"
+case "${path}" in
+    "${KANAMI_TEST_UPDATE_CHECKOUT:?}")
+        printf '%s %s %s\n' \
+            "${KANAMI_TEST_CHECKOUT_UID:-0}" \
+            "${KANAMI_TEST_CHECKOUT_GID:-0}" \
+            "${KANAMI_TEST_CHECKOUT_MODE:-755}"
+        ;;
+    "${KANAMI_TEST_UPDATE_SCRIPTS_DIR:?}")
+        printf '%s %s %s\n' \
+            "${KANAMI_TEST_SCRIPTS_UID:-0}" \
+            "${KANAMI_TEST_SCRIPTS_GID:-0}" \
+            "${KANAMI_TEST_SCRIPTS_MODE:-755}"
+        ;;
+    "${KANAMI_TEST_UPDATE_SCRIPT:?}")
+        printf '%s %s %s\n' \
+            "${KANAMI_TEST_UPDATER_UID:-0}" \
+            "${KANAMI_TEST_UPDATER_GID:-0}" \
+            "${KANAMI_TEST_UPDATER_MODE:-644}"
+        ;;
+    *)
+        exit 64
+        ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    fake_bash.chmod(0o755)
+    fake_stat.chmod(0o755)
+
+    source = MANAGER_SCRIPT.read_text(encoding="utf-8")
+    replacements = {
+        'readonly UPDATE_CHECKOUT="/opt/kanami"': (
+            f'readonly UPDATE_CHECKOUT="{checkout.as_posix()}"'
+        ),
+        'readonly UPDATE_SCRIPTS_DIR="/opt/kanami/scripts"': (
+            f'readonly UPDATE_SCRIPTS_DIR="{scripts_dir.as_posix()}"'
+        ),
+        'readonly UPDATE_SCRIPT="/opt/kanami/scripts/update.sh"': (
+            f'readonly UPDATE_SCRIPT="{updater.as_posix()}"'
+        ),
+        'readonly UPDATE_BASH="/usr/bin/bash"': (
+            f'readonly UPDATE_BASH="{fake_bash.as_posix()}"'
+        ),
+        'readonly UPDATE_STAT="/usr/bin/stat"': (
+            f'readonly UPDATE_STAT="{fake_stat.as_posix()}"'
+        ),
+        "if (( EUID != 0 )); then": "if false; then",
+    }
+    for production_value, test_value in replacements.items():
+        assert source.count(production_value) == 1
+        source = source.replace(production_value, test_value)
+
+    test_manager = tmp_path / "kanami"
+    test_manager.write_text(source, encoding="utf-8")
+    test_manager.chmod(0o755)
+    environment = {
+        "KANAMI_TEST_UPDATE_INVOCATION_LOG": invocation_log.as_posix(),
+        "KANAMI_TEST_UPDATE_STAT_LOG": stat_log.as_posix(),
+        "KANAMI_TEST_UPDATE_EXIT_CODE": str(updater_exit_code),
+        "KANAMI_TEST_UPDATE_CHECKOUT": checkout.as_posix(),
+        "KANAMI_TEST_UPDATE_SCRIPTS_DIR": scripts_dir.as_posix(),
+        "KANAMI_TEST_UPDATE_SCRIPT": updater.as_posix(),
+    }
+    return test_manager, environment, invocation_log, checkout, updater
+
+
 def create_checkout(tmp_path: Path) -> Path:
     checkout = tmp_path / "checkout"
     checkout.mkdir()
@@ -321,6 +419,7 @@ def test_help_aliases_show_the_same_help(argument: str) -> None:
     assert "restart" in result.stdout
     assert "start      Start the main Kanami bot service" in result.stdout
     assert "stop       Stop the main Kanami bot service" in result.stdout
+    assert "update     Run the trusted production updater" in result.stdout
     assert "menu" in result.stdout
     assert result.stderr == ""
 
@@ -336,7 +435,7 @@ def test_version_shows_manager_name_and_optional_git_commit() -> None:
     )
 
 
-def test_menu_preserves_read_only_options_adds_restart_and_exits() -> None:
+def test_menu_preserves_existing_numbering_adds_update_and_exits() -> None:
     result = run_manager("menu", input_text="0\n")
 
     assert result.returncode == 0
@@ -348,10 +447,10 @@ def test_menu_preserves_read_only_options_adds_restart_and_exits() -> None:
     assert "6. Logs" in result.stdout
     assert "7. Start bot" in result.stdout
     assert "8. Stop bot" in result.stdout
+    assert "9. Update" in result.stdout
     assert "0. Exit" in result.stdout
-    assert "Select an option [0-8]:" in result.stdout
+    assert "Select an option [0-9]:" in result.stdout
     assert "Install" not in result.stdout
-    assert "Update" not in result.stdout
     assert "Backup" not in result.stdout
     assert "Restore" not in result.stdout
     assert "Goodbye." in result.stdout
@@ -409,7 +508,7 @@ def test_menu_invalid_choice_returns_to_menu() -> None:
     result = run_manager("menu", input_text="invalid\n0\n")
 
     assert result.returncode == 0
-    assert "Invalid choice: invalid. Select a number from 0 to 8." in result.stdout
+    assert "Invalid choice: invalid. Select a number from 0 to 9." in result.stdout
     assert result.stdout.count("1. Status") == 2
     assert "Goodbye." in result.stdout
 
@@ -974,6 +1073,295 @@ def test_start_stop_do_not_escalate_or_access_other_subsystems() -> None:
         '"${MUTATING_SYSTEMCTL}" reset-failed',
     ):
         assert forbidden not in lifecycle_source
+
+
+def test_update_rejects_positional_arguments_before_preflight() -> None:
+    result = run_manager("update", "unexpected")
+
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert "update does not accept arguments" in result.stderr
+    assert "Usage: sudo kanami update" in result.stderr
+
+
+def test_update_rejects_non_root_before_trust_checks() -> None:
+    if not hasattr(os, "geteuid") or os.geteuid() == 0:
+        pytest.skip("behavioral root-boundary check requires a non-root host")
+
+    result = run_manager("update")
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "update requires root; run: sudo kanami update" in result.stderr
+    assert "trust check" not in result.stderr
+
+
+def test_update_uses_fixed_production_bootstrap_boundary() -> None:
+    source = MANAGER_SCRIPT.read_text(encoding="utf-8")
+    run_source = shell_function_source("run_update")
+    trust_source = "\n".join(
+        (
+            shell_function_source("validate_update_path_metadata"),
+            shell_function_source("validate_update_directory"),
+            shell_function_source("validate_update_script"),
+            shell_function_source("validate_update_bootstrap_trust"),
+        )
+    )
+
+    assert 'readonly UPDATE_CHECKOUT="/opt/kanami"' in source
+    assert 'readonly UPDATE_SCRIPTS_DIR="/opt/kanami/scripts"' in source
+    assert 'readonly UPDATE_SCRIPT="/opt/kanami/scripts/update.sh"' in source
+    assert 'readonly UPDATE_BASH="/usr/bin/bash"' in source
+    assert 'readonly UPDATE_STAT="/usr/bin/stat"' in source
+    assert "KANAMI_MANAGER_UPDATE" not in source
+    assert 'UPDATE_SCRIPT="${' not in source
+    assert 'UPDATE_BASH="${' not in source
+    assert 'UPDATE_STAT="${' not in source
+    for read_only_seam in (
+        "KANAMI_MANAGER_INSTALL_DIR",
+        "KANAMI_MANAGER_UV_BOOTSTRAP_DIR",
+        "KANAMI_MANAGER_UV_CACHE_DIR",
+    ):
+        assert read_only_seam not in run_source + trust_source
+
+
+def test_update_checks_root_and_bootstrap_trust_before_fixed_bash_invocation() -> None:
+    run_source = shell_function_source("run_update")
+    trust_source = shell_function_source("validate_update_bootstrap_trust")
+    directory_source = shell_function_source("validate_update_directory")
+    updater_source = shell_function_source("validate_update_script")
+    metadata_source = shell_function_source("validate_update_path_metadata")
+
+    root_check = run_source.index("EUID")
+    bash_check = run_source.index("[[ ! -x ${UPDATE_BASH} ]]")
+    stat_check = run_source.index("[[ ! -x ${UPDATE_STAT} ]]")
+    trust_check = run_source.index("validate_update_bootstrap_trust")
+    invocation = run_source.index('"${UPDATE_BASH}" "${UPDATE_SCRIPT}"')
+    assert root_check < bash_check < stat_check < trust_check < invocation
+    assert trust_source.index("UPDATE_CHECKOUT") < trust_source.index(
+        "UPDATE_SCRIPTS_DIR"
+    )
+    assert trust_source.index("UPDATE_SCRIPTS_DIR") < trust_source.index(
+        "validate_update_script"
+    )
+    assert "[[ -L ${path} ]]" in directory_source
+    assert "[[ -L ${UPDATE_SCRIPT} ]]" in updater_source
+    assert "[[ ! -f ${UPDATE_SCRIPT} || ! -r ${UPDATE_SCRIPT} ]]" in updater_source
+    assert "-x ${UPDATE_SCRIPT}" not in updater_source
+    assert "UID 0 and GID 0" in metadata_source
+    assert "8#022" in metadata_source
+
+
+@pytest.mark.parametrize("updater_exit_code", [0, 7])
+def test_direct_update_streams_output_and_propagates_updater_exit_code(
+    tmp_path: Path,
+    updater_exit_code: int,
+) -> None:
+    manager, environment, invocation_log, _, updater = create_update_test_manager(
+        tmp_path,
+        updater_exit_code=updater_exit_code,
+    )
+
+    result = run_manager("update", environment=environment, script=manager)
+
+    assert result.returncode == updater_exit_code
+    assert "fake updater stdout" in result.stdout
+    assert "fake updater stderr" in result.stderr
+    assert invocation_log.read_text(encoding="utf-8").splitlines() == [
+        updater.as_posix()
+    ]
+
+
+@pytest.mark.parametrize(
+    ("metadata_name", "metadata_value", "expected_label"),
+    [
+        ("KANAMI_TEST_CHECKOUT_UID", "1000", "production checkout"),
+        ("KANAMI_TEST_CHECKOUT_MODE", "775", "production checkout"),
+        ("KANAMI_TEST_SCRIPTS_GID", "1000", "scripts directory"),
+        ("KANAMI_TEST_SCRIPTS_MODE", "757", "scripts directory"),
+        ("KANAMI_TEST_UPDATER_UID", "1000", "updater"),
+        ("KANAMI_TEST_UPDATER_GID", "1000", "updater"),
+        ("KANAMI_TEST_UPDATER_MODE", "664", "updater"),
+    ],
+)
+def test_update_rejects_untrusted_owner_group_or_mode_before_invocation(
+    tmp_path: Path,
+    metadata_name: str,
+    metadata_value: str,
+    expected_label: str,
+) -> None:
+    manager, environment, invocation_log, _, _ = create_update_test_manager(tmp_path)
+    environment[metadata_name] = metadata_value
+
+    result = run_manager("update", environment=environment, script=manager)
+
+    assert result.returncode != 0
+    assert f"update trust check failed: {expected_label}" in result.stderr
+    assert not invocation_log.exists()
+
+
+def test_update_rejects_non_regular_updater_before_invocation(tmp_path: Path) -> None:
+    manager, environment, invocation_log, _, updater = create_update_test_manager(
+        tmp_path
+    )
+    updater.unlink()
+    updater.mkdir()
+
+    result = run_manager("update", environment=environment, script=manager)
+
+    assert result.returncode != 0
+    assert "updater is missing or is not a readable regular file" in result.stderr
+    assert not invocation_log.exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="requires Unix symlink semantics")
+@pytest.mark.parametrize("component", ["checkout", "scripts", "updater"])
+def test_update_rejects_symlinked_bootstrap_chain_before_invocation(
+    tmp_path: Path,
+    component: str,
+) -> None:
+    manager, environment, invocation_log, checkout, updater = (
+        create_update_test_manager(tmp_path)
+    )
+    scripts_dir = checkout / "scripts"
+    if component == "checkout":
+        real_checkout = tmp_path / "real-checkout"
+        checkout.rename(real_checkout)
+        checkout.symlink_to(real_checkout, target_is_directory=True)
+    elif component == "scripts":
+        real_scripts = checkout / "real-scripts"
+        scripts_dir.rename(real_scripts)
+        scripts_dir.symlink_to(real_scripts.name, target_is_directory=True)
+    else:
+        real_updater = updater.with_name("real-update.sh")
+        updater.rename(real_updater)
+        updater.symlink_to(real_updater.name)
+
+    result = run_manager("update", environment=environment, script=manager)
+
+    assert result.returncode != 0
+    assert "must not be a symlink" in result.stderr
+    assert not invocation_log.exists()
+
+
+@pytest.mark.parametrize("answer", ["", "n", "N", "invalid"])
+def test_menu_update_cancellation_returns_to_menu(
+    tmp_path: Path,
+    answer: str,
+) -> None:
+    manager, environment, invocation_log, _, _ = create_update_test_manager(tmp_path)
+
+    result = run_manager(
+        "menu",
+        environment=environment,
+        input_text=f"9\n{answer}\n0\n",
+        script=manager,
+    )
+
+    assert result.returncode == 0
+    assert "Run Kanami update? [y/N]:" in result.stdout
+    assert "Update cancelled." in result.stdout
+    assert result.stdout.count("1. Status") == 2
+    assert "Goodbye." in result.stdout
+    assert not invocation_log.exists()
+
+
+def test_menu_update_confirmation_eof_cancels_and_returns_to_menu(
+    tmp_path: Path,
+) -> None:
+    manager, environment, invocation_log, _, _ = create_update_test_manager(tmp_path)
+
+    result = run_manager(
+        "menu", environment=environment, input_text="9\n", script=manager
+    )
+
+    assert result.returncode == 0
+    assert "Update cancelled." in result.stdout
+    assert result.stdout.count("1. Status") == 2
+    assert "End of input; exiting." in result.stdout
+    assert not invocation_log.exists()
+
+
+@pytest.mark.parametrize("answer", ["y", "Y", "yes", "YES"])
+def test_menu_update_positive_confirmation_invokes_updater_and_exits(
+    tmp_path: Path,
+    answer: str,
+) -> None:
+    manager, environment, invocation_log, _, _ = create_update_test_manager(tmp_path)
+
+    result = run_manager(
+        "menu",
+        environment=environment,
+        input_text=f"9\n{answer}\n0\n",
+        script=manager,
+    )
+
+    assert result.returncode == 0
+    assert invocation_log.exists()
+    assert result.stdout.count("1. Status") == 1
+    assert "Update completed." in result.stdout
+    assert "Manager may have been refreshed" in result.stdout
+    assert "Run 'kanami' again" in result.stdout
+    assert "Goodbye." not in result.stdout
+
+
+def test_menu_update_failure_propagates_exit_and_ends_session(tmp_path: Path) -> None:
+    manager, environment, invocation_log, _, _ = create_update_test_manager(
+        tmp_path,
+        updater_exit_code=7,
+    )
+
+    result = run_manager(
+        "menu",
+        environment=environment,
+        input_text="9\ny\n0\n",
+        script=manager,
+    )
+
+    assert result.returncode == 7
+    assert invocation_log.exists()
+    assert result.stdout.count("1. Status") == 1
+    assert "installation may be partially updated" in result.stderr
+    assert "Manager may have been refreshed" in result.stdout
+    assert "rollback" not in (result.stdout + result.stderr).lower()
+    assert "Goodbye." not in result.stdout
+
+
+def test_no_argument_tty_menu_does_not_mask_menu_failure_status() -> None:
+    main_source = shell_function_source("main")
+
+    assert "show_menu || return $?" in main_source
+
+
+def test_update_wrapper_does_not_duplicate_workflow_or_escalate() -> None:
+    update_source = "\n".join(
+        (
+            shell_function_source("validate_update_path_metadata"),
+            shell_function_source("validate_update_directory"),
+            shell_function_source("validate_update_script"),
+            shell_function_source("validate_update_bootstrap_trust"),
+            shell_function_source("run_update"),
+        )
+    )
+
+    assert not re.search(
+        r"^\s*(?:sudo|su|eval|source|\.)\b", update_source, re.MULTILINE
+    )
+    for forbidden in (
+        "git ",
+        "uv ",
+        "alembic",
+        "DATABASE_URL",
+        "kanami.env",
+        "systemctl",
+        "daemon-reload",
+        "restart",
+        "chown",
+        "chmod",
+        "reset --hard",
+        "git clean",
+    ):
+        assert forbidden not in update_source
 
 
 def test_restart_validates_unit_and_post_restart_active_state() -> None:

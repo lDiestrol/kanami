@@ -54,6 +54,7 @@ kanami logs --lines 50
 sudo kanami start
 sudo kanami stop
 sudo kanami restart
+sudo kanami update
 kanami menu
 ```
 
@@ -90,20 +91,33 @@ start успех выводится только после active check. Stop �
 требуют confirmation. Manager не выполняет auto-sudo, не затрагивает Web Admin
 и не меняет enable/disable boot policy.
 
+D2.9 добавляет `sudo kanami update` как тонкую оболочку над canonical
+`/opt/kanami/scripts/update.sh`. Manager не повторяет Git/uv/Alembic/systemd
+workflow: сначала он проверяет root и bootstrap trust цепочки `/opt/kanami`,
+`scripts` и `update.sh` (без symlink, UID/GID 0, без group/other write), затем
+отдельным process запускает `/usr/bin/bash /opt/kanami/scripts/update.sh` и
+передаёт его output и exit code. Direct CLI-вызов считается явным намерением и
+confirmation не требует. Полный ownership invariant checkout затем повторно
+проверяет сам updater как defense-in-depth.
+
 При запуске `kanami` без аргументов интерактивное меню открывается только когда
 stdin и stdout являются TTY. В pipeline, cron и CI manager показывает help и не
 ожидает input. Явная команда `kanami menu` сохраняет пункты 1–4 для Status,
-Doctor, Version и Help, оставляет `5. Restart bot` и `6. Logs`, добавляет
-`7. Start bot` и `8. Stop bot` и сохраняет `0. Exit`. Logs в menu использует
+Doctor, Version и Help, оставляет `5. Restart bot`, `6. Logs`, `7. Start bot` и
+`8. Stop bot`, добавляет `9. Update` и сохраняет `0. Exit`. Logs в menu использует
 default 100 и после завершения или ошибки возвращает пользователя в menu без
 confirmation. Menu Start также не требует confirmation. Menu Stop требует
 `y`, `Y`, `yes` или `YES`; пустой ввод, любой другой ответ и EOF отменяют stop.
 Menu restart требует отдельного подтверждения: `y`, `Y`, `yes` или `YES`
 подтверждают restart; пустой ввод, любой другой ответ и EOF отменяют действие.
-Ошибка restart показывается без аварийного закрытия menu.
+Ошибка restart показывается без аварийного закрытия menu. Menu Update также
+принимает только `y`, `Y`, `yes` или `YES`; cancellation возвращает в menu. После
+фактического запуска updater текущая menu session завершается при любом его exit
+code, потому что updater мог уже refresh-нуть `/usr/local/bin/kanami`. Для новой
+session нужно снова запустить `kanami`.
 
 Manager не читает env-файлы и пока не выполняет PostgreSQL, Alembic или HTTP
-проверки. Update/install, Web Admin lifecycle, enable/disable,
+проверки. Install, Web Admin lifecycle, enable/disable,
 backup/restore/rollback и другие lifecycle actions пока отсутствуют.
 
 ## Автоматизированная установка
@@ -243,12 +257,20 @@ token при обращении за помощью.
 
 ## Обновление
 
-Следующая команда предназначена только для installation, уже соответствующей
-canonical D2.8 ownership model: `/opt/kanami`, включая
-`scripts/update.sh`, принадлежит `root:root` и не writable для service user.
+Для installation, уже соответствующей canonical D2.8 ownership model, используйте:
 
 ```bash
-sudo /opt/kanami/scripts/update.sh
+sudo kanami update
+```
+
+Manager до запуска проверяет bootstrap trust updater path и запускает canonical
+script через fixed `/usr/bin/bash`, не полагаясь на executable bit. Direct
+command не запрашивает confirmation, не скрывает output и возвращает exit code
+updater-а. Если установленная копия Manager недоступна, допустимый manual
+fallback после отдельной проверки canonical ownership выглядит так:
+
+```bash
+sudo /usr/bin/bash /opt/kanami/scripts/update.sh
 ```
 
 Не запускайте checkout-local updater через `sudo` на старой installer-v2
@@ -276,6 +298,12 @@ user data и config updater не удаляет.
 Внутренняя проверка updater-а подтверждает invariant уже доверенной canonical
 installation и обнаруживает последующий ownership drift. Она не является
 bootstrap-механизмом доверия или migration старого all-`kanami` checkout.
+
+Updater refresh-ит Manager сразу после успешного pull, до dependency sync,
+migrations и restart. Поэтому более поздняя ошибка может оставить installation
+частично обновлённой, включая уже заменённый `/usr/local/bin/kanami`. D2.9 не
+выполняет rollback: изучите исходный updater output, затем используйте
+`kanami status`, `kanami doctor`, logs и при необходимости manual recovery.
 
 Backup PostgreSQL перед значимым production update остаётся ответственностью
 оператора; автоматическая backup/restore policy пока не входит в проект.

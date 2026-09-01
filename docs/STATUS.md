@@ -43,7 +43,8 @@ production-validated. Stage 6B.3 UX/audit polish объединён с `main`, �
 Debian 13 + systemd + локальный PostgreSQL. Начат D2 — Installation & Lifecycle
 v2: новая официальная установка добавляет `/usr/local/bin/kanami`, штатный
 updater refresh-ит его после pull, а Kanami Manager поддерживает read-only
-`help`, `version`, `status`, `doctor` и `menu`.
+`help`, `version`, `status`, `doctor`, `logs`, lifecycle start/stop/restart и
+trusted wrapper `update`.
 Achievements
 доступны пользователям через guild-only `/achievements` с актуализацией
 voice/community метрик и идемпотентной выдачей. Pagination не реализована.
@@ -68,6 +69,15 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что уже выполнено
 
+- D2.9: добавлен root-only `sudo kanami update` как thin wrapper над canonical
+  `/opt/kanami/scripts/update.sh`. До запуска Manager fixed `stat` проверяет
+  checkout/scripts/updater bootstrap chain: ожидаемые типы, отсутствие symlink,
+  UID/GID 0 и отсутствие group/other write. Updater запускается отдельным fixed
+  `/usr/bin/bash`, output не скрывается, exit code передаётся caller-у; Git, uv,
+  Alembic и systemd workflow остаётся только в `scripts/update.sh`. Direct CLI не
+  требует confirmation; menu `9. Update` требует y/Y/yes/YES и после actual
+  invocation завершает session из-за возможного self-refresh. Rollback не
+  добавлен, поэтому runtime failure может оставить partial update.
 - D2.8: production checkout `/opt/kanami`, `.git` и tracked source закреплены за
   `root:root` без write access для service user. Узким writable-исключением
   остаётся ignored `.venv` (`kanami:kanami`); runtime home и uv cache также
@@ -1017,13 +1027,12 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что сейчас делается
 
-D2.8 готовится как отдельный security/ownership checkpoint перед будущей
-командой `kanami update`: production checkout и privileged deployment sources
-становятся root-owned, а `.venv` остаётся минимальным writable-исключением для
-service user. Сама manager-команда `kanami update`, legacy ownership migration и
-остальные lifecycle/backup/restore функции в текущий scope не входят. До
-восстановления trust boundary старый service-user-writable checkout-local
-`update.sh` не должен запускаться через `sudo`.
+D2.9 готовится как отдельный checkpoint trusted `kanami update`: Manager
+проверяет bootstrap trust до запуска и делегирует неизменённый workflow
+canonical updater-у. Legacy ownership migration, rollback, backup/restore и
+остальные lifecycle функции в текущий scope не входят. До восстановления D2.8
+trust boundary старый service-user-writable checkout-local `update.sh` по-прежнему
+не должен запускаться через `sudo`.
 
 WUI-4A.1 и оба responsive hotfix развёрнуты в production. Первый hotfix исправил
 расположение compact-кнопки «Профиль» справа в member row на tablet width. Второй
@@ -1323,6 +1332,11 @@ automation, settings/env, migrations и intents для `/health` не добав
   legacy checkout-local `update.sh`, writable пользователем `kanami`, безопасным
   для запуска через `sudo`; такая installation требует manual trust restoration
   из trusted source.
+- D2.9 разделяет bootstrap и full invariant validation. Manager до execution
+  проверяет только root-owned/non-writable non-symlink chain до updater и
+  запускает его fixed `/usr/bin/bash`; trusted updater затем сам проверяет весь
+  checkout и выполняет canonical workflow. Direct exit code не маскируется, а
+  menu после invocation завершается из-за возможного Manager self-refresh.
 - Миграции выполняются отдельной командой; приложение не запускает Alembic автоматически.
 - Lifecycle имеет единую точку запуска, graceful shutdown и централизованное управление background tasks.
 - Штатный SIGINT завершается успешно только после async cleanup Discord client/background tasks и database engine; entrypoint подавляет соответствующий `KeyboardInterrupt`, но не произвольную cancellation или runtime exceptions.
@@ -1377,11 +1391,11 @@ automation, settings/env, migrations и intents для `/health` не добав
 
 ## Следующие шаги
 
-1. Продолжить D2.9+ отдельными небольшими manager checkpoint-этапами после
-   закрепления D2.8 trust boundary. `kanami update` ещё не реализован.
-   Follow/Web Admin logs, update/install, Web Admin lifecycle, enable/disable,
+1. Продолжить D2.10+ отдельными небольшими manager checkpoint-этапами без
+   преждевременного проектирования следующей mutating команды.
+   Follow/Web Admin logs, install, Web Admin lifecycle, enable/disable,
    backup/restore/rollback и PostgreSQL/Alembic/HTTP doctor probes не входят в
-   D2.8.
+   D2.9.
 2. При следующем реальном этапе Rules Compliance / reacceptance проверить
    оставшийся production scenario: Publish новой Rules version → успешный DB
    commit → automatic Bot Control sync → обновление существующего managed message

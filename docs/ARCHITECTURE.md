@@ -1314,6 +1314,16 @@ reacceptance workflow намеренно отложены.
   нельзя безопасно самомигрировать через `sudo ./scripts/update.sh`: до любого
   privileged update нужны manual review и migration/reinstall из trusted source,
   без автоматического recursive `chown` неизвестной установки.
+- D2.9 добавляет root-only `kanami update`, не перенося update workflow в
+  Manager. До child process Manager fixed `/usr/bin/stat` проверяет три элемента
+  bootstrap trust chain — `/opt/kanami`, `/opt/kanami/scripts` и regular readable
+  `/opt/kanami/scripts/update.sh`: ни один не является symlink, каждый имеет
+  numeric UID/GID 0 и не writable для group/other. Только после этого fixed
+  `/usr/bin/bash` запускает canonical updater отдельным process; его output и
+  exit code проходят caller-у без capture/masking. Это bootstrap validation до
+  privileged execution, тогда как более широкий recursive invariant D2.8 внутри
+  trusted updater остаётся defense-in-depth. Read-only path seams и PATH не
+  являются authority для update; auto-sudo и repair отсутствуют.
 - Foundation будущего Kanami Manager — автономный Bash entrypoint
   `scripts/manager.sh`, рассчитанный на последующую установку как
   `/usr/local/bin/kanami`. D2.1 добавил `help`/`version`, а D2.2 — read-only
@@ -1366,8 +1376,13 @@ reacceptance workflow намеренно отложены.
   `5. Restart bot` требует отдельного positive confirmation. Пункт `6. Logs`
   вызывает default read-only просмотр 100 записей без confirmation и возвращает
   пользователя в menu также после journalctl failure. `7. Start bot` выполняет
-  action без confirmation, а `8. Stop bot` требует явного y/Y/yes/YES. Отмена,
-  EOF и action failure возвращают пользователя в menu. Прямой
+  action без confirmation, а `8. Stop bot` требует явного y/Y/yes/YES. `9. Update`
+  требует того же positive confirmation, но direct `sudo kanami update` — нет.
+  Cancellation до invocation возвращает пользователя в menu; после фактического
+  updater invocation menu завершается с его status и предлагает запустить новую
+  session, поскольку D2.4 мог refresh-нуть установленный Manager даже до более
+  поздней ошибки. Rollback отсутствует, поэтому failure явно допускает partial
+  update. Прямой
   `sudo kanami restart` считается явным намерением и confirmation не требует.
   Неявный запуск menu требует TTY на stdin и stdout; non-TTY запуск без аргументов
   показывает help, invalid input повторяет menu, EOF завершается успешно.
