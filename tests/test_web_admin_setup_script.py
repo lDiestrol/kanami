@@ -1341,6 +1341,7 @@ def real_cleanup_harness(
             'web_env_replaced="false"',
             f'bot_control_secret="{TEST_SECRET}"',
             shell_function_source("cleanup"),
+            "trap cleanup EXIT",
             f"ln -s {shell_quote(mask_target)} {shell_quote(mask)}",
             "exit 47",
         )
@@ -1869,6 +1870,7 @@ def test_confirmation_precedes_all_production_mutations_and_cancellation_returns
         "install_caddy_package_safely",
         "install_and_validate_caddy_config",
         "restart_core_and_require_active",
+        "smoke_bot_control",
         "start_web_and_smoke",
         "activate_caddy",
         "enable_services_after_smoke",
