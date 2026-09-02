@@ -69,6 +69,58 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что уже выполнено
 
+- D2.13: добавлена отдельная canonical production activation operation `sudo
+  kanami web-setup` и пункт 10 Manager menu. Manager использует только trusted
+  `/opt/kanami/scripts/web-admin-setup.sh`; read-only overrides не дают mutation
+  authority. Setup root-only, повторяет полный checkout trust contract и до
+  final `/dev/tty` confirmation выполняет только complete-D2.12 metadata,
+  bounded env/OAuth hostname/DNS и existing-proxy checks. Security review
+  усилил эту boundary: exact same-host Web network values, mutual numeric group
+  isolation, trusted `/etc/kanami` и уже loaded+active+enabled Core теперь
+  обязательны до чтения pairing secrets и любых mutations.
+- D2.13 завершает loopback Bot Control pairing: при полном отсутствии шести
+  keys один `openssl rand -hex 32` secret записывается в same-directory atomic
+  replacements обоих env с сохранением unrelated keys и exact permissions;
+  secret-bearing random-name staging остаётся `root:*` `0600`, а `0640`
+  применяется только к canonical path после соответствующего rename;
+  complete pairing идемпотентен, partial/contradictory/mismatched state
+  fail-closed. Env не source/eval-ятся, duplicate critical keys отклоняются, а
+  secret не выводится и не передаётся через argv.
+- D2.13 автоматизирует только recommended same-host Caddy topology. Tracked
+  managed template публикует `/ -> /admin/`, proxy только `/admin/*` на
+  `127.0.0.1:8000` и `404` для остального без HSTS. Используется Debian 13
+  package `caddy` из configured system APT sources без добавления стороннего
+  repository; first package start подавляется
+  временной owned systemd mask и package-created enablement снимается до smoke.
+  Absent-package state требует отсутствующего `/etc/caddy` и обоих Caddy units;
+  installed-package state требует trusted directory/exact config/service
+  identity, изоляции caddy от kanami/kanami-web, canonical effective vendor unit
+  без drop-ins и inactive+disabled caddy-api. Новый package install получает
+  scoped `umask 022`, проверяет trusted `/var/lib/caddy`, явно disable-ит оба
+  units; unexpected package start best-effort stop-ится до снятия owned mask.
+  Тот же `/var/lib/caddy` trust invariant повторяется до confirmation для уже
+  установленного exact managed Caddy, поэтому state-directory drift fail-closed.
+  Foreign Caddy/Nginx/Traefik отклоняются в пользу documented manual path.
+- Activation order закреплён как pairing → Caddy fmt/validate → core restart →
+  authenticated loopback Control smoke → Web start/direct-TCP local health →
+  Caddy start/reload → proxy-bypassing best-effort exact-200 HTTPS smoke → enable
+  Web/Caddy. Firewall и Discord
+  Developer Portal не меняются; partial failure честно требует inspection без
+  rollback claim. Installer остаётся D2.12 foundation и лишь предлагает после
+  DNS запустить `sudo kanami web-setup`; updater по-прежнему требует заранее
+  остановленный Web Admin.
+- D2.13 security suite содержит 97 passed и 3 Windows-only symlink skips с
+  реальным Git Bash: network/group/parent trust, pairing и restrictive staging,
+  Caddy path/unit/drop-in/mask invariants, Core boot readiness, direct local Web
+  health и public proxy bypass. Focused
+  Реальный `cleanup()` через EXIT trap теперь покрыт для owned/foreign Caddy
+  masks, apt failure и unexpected package start; отдельные runtime harnesses
+  проверяют оба env `mv` failure paths, mandatory-stage short-circuit и
+  non-fatal public HTTPS outcomes. Focused
+  D2.13/Manager/installer/updater/template regression содержит 352 passed и 17
+  skipped. Полный suite с Git Bash содержит 1710 passed, 33 skipped без части
+  Unix semantics/`TEST_DATABASE_URL` и 39 существующих discord.py warnings.
+  Clean Debian 13 activation smoke не выполнялся.
 - D2.12: optional Web Admin wizard сохраняет default Core-only flow и до общего
   confirmation собирает OAuth Client ID, hidden safe Client Secret, exact HTTPS
   callback и canonical OWNER IDs. Opt-in provisioning создаёт отдельные
@@ -1063,14 +1115,12 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что сейчас делается
 
-D2.12 реализует optional Web Admin installation foundation поверх сохранённого
-D2.11 Core flow. Default `No` оставляет Core-only provisioning; opt-in wizard
-собирает OAuth metadata/hidden secret и canonical OWNER IDs до общего final
-confirmation. Installer создаёт отдельные `kanami-web`, runtime/venv, protected
-env, scoped PostgreSQL role и hardened unit, но не запускает Web Admin. Updater
-опционально refresh-ит отдельный web runtime, а Manager doctor проверяет новый
-canonical executable только read-only. Reverse proxy, TLS/domain, Bot Control и
-Web lifecycle commands в D2.12 не входят.
+D2.13 security-review blockers исправлены в рабочем дереве; реализация
+остановлена для повторного ручного security review. D2.12 остаётся default-safe installation foundation без
+auto-publish; D2.13 является отдельным explicit completion после public DNS.
+Реальный clean Debian 13 VM smoke package/mask/failure cleanup, automatic TLS,
+Bot Control/Web readiness и browser OAuth/write checklist ещё не выполнялся и
+не подменяется Windows hermetic tests.
 
 WUI-4A.1 и оба responsive hotfix развёрнуты в production. Первый hotfix исправил
 расположение compact-кнопки «Профиль» справа в member row на tablet width. Второй
@@ -1259,10 +1309,12 @@ automation, settings/env, migrations и intents для `/health` не добав
   недоступности БД или ещё не provisioned/stale membership доступ fail-closed.
 - Management UI не предоставляет Discord API search, invite flow, историю
   revoked grants или дополнительные роли; это сознательно вне текущего этапа.
-- D2.12 автоматизирует только isolated Web Admin foundation на чистой Debian 13
-  installation. Публичный reverse proxy/TLS/domain, OAuth callback verification,
-  Bot Control wiring и первый Web Admin start остаются ручными будущими шагами;
-  control listener нельзя выводить за `127.0.0.1`.
+- D2.13 managed Caddy activation ещё не прошла end-to-end smoke на clean Debian
+  13 VM. До этого package first-start mask cleanup, real systemd ordering,
+  certificate issuance, NAT/public HTTPS и browser OAuth/write path считаются
+  неподтверждёнными production environment facts. Existing/remote proxy
+  deployments остаются manual; control listener нельзя выводить за
+  `127.0.0.1`.
 - Sessions, OAuth transactions и write limiter process-local: restart отзывает
   sessions и очищает limiter; multi-worker deployment без общего session store не
   поддерживается. Reverse proxy network limiting документирован для Nginx, но
@@ -1270,6 +1322,16 @@ automation, settings/env, migrations и intents для `/health` не добав
 
 ## Важные принятые решения
 
+- D2.12 и D2.13 разделены явной confirmation boundary: обычный installer не
+  публикует Web Admin, а production mutation доступна только из trusted
+  canonical Manager path. Recommended automation владеет только exact managed
+  same-host Caddy config; arbitrary proxy merge, firewall mutation, automatic
+  HSTS и Discord Developer Portal automation запрещены.
+- Debian 13 Caddy package на first install enable/start-ит service, поэтому
+  managed setup использует узкую временную systemd mask только когда package и
+  unit отсутствуют, затем снимает package enablement до local smoke и удаляет
+  лишь собственную exact `/dev/null` mask на всех paths. Existing foreign
+  Caddyfile никогда не перезаписывается.
 - G3A не создаёт второй алгоритм игровой статистики: Web Admin read-side
   переиспользует `GameStatisticsService`, его timezone/canonicalization semantics
   и существующий `SqlAlchemyGameTrackingRepository`. Параметр `game_period`
@@ -1434,11 +1496,11 @@ automation, settings/env, migrations и intents для `/health` не добав
 
 ## Следующие шаги
 
-1. Выполнить D2.13 как отдельное завершение Web Admin deployment: reverse
-   proxy/TLS/domain, точная настройка и проверка OAuth callback перед ручным
-   первым запуском. Web Admin lifecycle/enable-disable/log commands,
-   backup/restore/rollback и PostgreSQL/Alembic/HTTP doctor probes не входят в
-   D2.12.
+1. Провести ручной security review D2.13, затем отдельный clean Debian 13 VM
+   smoke: cancellation/no-mutation, package first-start suppression и cleanup,
+   new/idempotent pairing, systemd ordering, local Control/Web health, public
+   automatic TLS и browser OAuth/OWNER/read/write checklist. Проверить failure
+   injection после каждого mutation stage и manual-inspection diagnostics.
 2. При следующем реальном этапе Rules Compliance / reacceptance проверить
    оставшийся production scenario: Publish новой Rules version → успешный DB
    commit → automatic Bot Control sync → обновление существующего managed message

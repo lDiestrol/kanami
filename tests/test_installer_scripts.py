@@ -758,5 +758,7 @@ def test_web_admin_is_optional_and_never_auto_started() -> None:
         "systemctl start kanami-web-admin",
         "systemctl enable --now kanami-web-admin",
         "kanami web-start",
+        "web-admin-setup.sh",
     ):
         assert forbidden not in source
+    assert "Then run: sudo kanami web-setup" in source

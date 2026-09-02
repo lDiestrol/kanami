@@ -701,8 +701,9 @@ if [[ ${configure_web_admin} == "true" ]]; then
     printf '%s\n' \
         '' \
         'Web Admin installed but not started.' \
-        'Configure reverse proxy/TLS and verify the OAuth redirect before starting it.' \
-        'Continue with docs/WEB_ADMIN_DEPLOYMENT.md; do not expose port 8000 directly.'
+        'Create public DNS and ensure inbound TCP/80+443 reach this host.' \
+        'Then run: sudo kanami web-setup' \
+        'Do not expose ports 8000, 8765 or 5432 directly.'
 fi
 trap - ERR
 }

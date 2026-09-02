@@ -4,7 +4,19 @@ Debian 13 installer D2.12 может опционально подготовит
 отдельные `kanami-web`, runtime, protected env, least-privilege DB role и
 systemd unit. Он не устанавливает proxy/TLS, не проверяет публичный callback, не
 включает Bot Control и не запускает Web Admin. Шаги ниже завершаются оператором
-в D2.13 перед первым запуском; prepared port 8000 нельзя публиковать напрямую.
+отдельной D2.13 operation перед первым запуском; prepared port 8000 нельзя
+публиковать напрямую.
+
+Canonical recommended completion после настройки DNS:
+
+```bash
+sudo kanami web-setup
+```
+
+Команда поддерживает только same-host managed Caddy topology. Existing Caddy,
+Nginx, Traefik и central/remote proxy остаются manual advanced modes из этого
+документа: automation не пытается объединять или переписывать чужую
+конфигурацию.
 
 Web Admin публикуется только через TLS reverse proxy. Процесс Web Admin не имеет
 `DISCORD_TOKEN`, работает от отдельного пользователя, использует отдельную
@@ -25,10 +37,22 @@ Internet
   -> Kanami Web Admin
 ```
 
-Оставьте `WEB_ADMIN_HOST=127.0.0.1` и используйте
-[`deploy/caddy/Caddyfile.example`](../deploy/caddy/Caddyfile.example). Caddy получает
-публичный сертификат автоматически и штатно перенаправляет HTTP на HTTPS; отдельный
-redirect block не нужен. `tls internal` для публичного домена не используется.
+Оставьте `WEB_ADMIN_HOST=127.0.0.1`, настройте public DNS и выполните
+`sudo kanami web-setup`. Operation выводит hostname только из уже сохранённого
+точного OAuth callback, проверяет DNS, устанавливает официальный Debian 13
+package `caddy`, генерирует `/etc/caddy/Caddyfile` из tracked
+`deploy/caddy/Caddyfile.managed.template` и использует обычный automatic HTTPS.
+Kanami не добавляет Cloudsmith или другой сторонний apt repository. `tls
+internal` для публичного домена не используется.
+
+Debian package на первой установке включает и пытается запустить Caddy. Поэтому
+`web-setup` до `apt-get install caddy` создаёт только собственную временную
+systemd mask, после package install снимает package-created enablement, а маску
+удаляет на success и failure paths. Уже установленный Caddy принимается только
+при точном совпадении Kanami-managed config для OAuth hostname; любой чужой или
+неоднозначный Caddyfile приводит к отказу и переходу к manual path. Copy-paste
+пример остаётся в
+[`deploy/caddy/Caddyfile.example`](../deploy/caddy/Caddyfile.example).
 
 ### 2. Существующий proxy на той же VM
 
@@ -42,6 +66,53 @@ Internet
 Kanami Caddy не устанавливается. Для Nginx используйте
 [`deploy/nginx/kanami-same-host.conf.example`](../deploy/nginx/kanami-same-host.conf.example)
 и приложенный snippet. Bind и здесь остаётся loopback без дополнительных флагов.
+Не запускайте managed `web-setup` поверх этой topology: подготовьте Bot Control
+pairing, proxy config и service lifecycle вручную по тем же invariants.
+
+## Что проверяет и изменяет `web-setup`
+
+До final confirmation выполняются только read-only проверки:
+
+- Debian 13 и полный trusted root-owned `/opt/kanami` contract;
+- complete D2.12 users/runtime/env/units с exact owner/group/mode и без symlink;
+- real `/etc/kanami` `root:kanami` `0750`, взаимная supplementary-group
+  изоляция `kanami`/`kanami-web` и уже active+enabled Core;
+- bounded exact-key parsing protected env без `source`/`eval`, включая duplicate
+  rejection;
+- exact same-host Web contract `127.0.0.1:8000`, Secure cookie и выключенный
+  либо отсутствующий private-bind opt-in;
+- exact HTTPS OAuth callback, обычный public DNS hostname и bounded DNS lookup;
+- отсутствие foreign proxy deployment либо exact existing managed Caddy config;
+- для installed Caddy — изолированный `caddy` user, canonical effective Debian
+  unit без drop-ins, trusted `caddy:caddy` `/var/lib/caddy` и
+  inactive+disabled `caddy-api.service`;
+- полное отсутствие Bot Control keys или уже complete exact pairing.
+
+Summary показывает hostname, OAuth callback и только loopback endpoints. После
+явного `y` operation:
+
+1. создаёт один `openssl rand -hex 32` secret только при полностью отсутствующем
+   pairing и отдельно заменяет каждый env с сохранением остальных keys:
+   random-name staging остаётся root-only `0600`, canonical files после rename
+   получают `root:kanami`/`root:kanami-web` `0640`;
+2. безопасно устанавливает Caddy при необходимости, выполняет `caddy fmt` и
+   `caddy validate` от Debian service user `caddy`, записывает
+   `/etc/caddy/Caddyfile` как `root:root` `0644`; package scripts получают
+   scoped `umask 022`, а `/var/lib/caddy` проверяется как real
+   `caddy:caddy` non-group/other-writable directory без automatic repair;
+3. перезапускает `kanami.service`, проверяет authenticated Bot Control только на
+   `127.0.0.1:8765` без secret в argv;
+4. запускает Web Admin и требует direct-TCP bounded local
+   `200 {"status":"healthy"}` на `127.0.0.1:8000/admin/health` без влияния
+   proxy environment;
+5. запускает/reload Caddy, выполняет best-effort direct-network public HTTPS
+   smoke с exact HTTP 200 и только
+   после обязательных local smoke включает Web Admin и Caddy at boot.
+
+Partial, contradictory или mismatched Bot Control state никогда не repair-ится
+автоматически. Между двумя env нет cross-file transaction: ошибка после первого
+rename или любая более поздняя ошибка явно требует manual inspection. Setup не
+обещает rollback, не меняет firewall и не включает HSTS.
 
 ### 3. Центральный proxy на отдельной VM
 
@@ -186,7 +257,7 @@ numbered` и не потеряйте SSH-доступ. Kanami не меняет 
 /etc/kanami/kanami.env
   root:kanami 0640
   DISCORD_TOKEN
-  DISCORD_BOT_CONTROL_SHARED_SECRET (только если Bot Control настроен отдельно)
+  DISCORD_BOT_CONTROL_SHARED_SECRET (создаётся D2.13 при первом pairing)
 
 /etc/kanami/kanami-web-admin.env
   root:kanami-web 0640
@@ -196,15 +267,17 @@ numbered` и не потеряйте SSH-доступ. Kanami не меняет 
   GAME_TRACKING_ENABLED
   GAME_CONFIRM_INTERVAL_SECONDS
   WEB_ADMIN_DISCORD_CLIENT_SECRET
-  WEB_ADMIN_BOT_CONTROL_SHARED_SECRET (не создаётся D2.12)
+  WEB_ADMIN_BOT_CONTROL_SHARED_SECRET (создаётся D2.13 при первом pairing)
   (никогда не DISCORD_TOKEN)
 ```
 
 systemd читает `EnvironmentFile` до privilege drop, поэтому runtime user может не
 иметь прямого доступа к файлу. D2.12 не включает Bot Control и не создаёт его
-URL/shared secrets; это отдельный checkpoint. Если он будет настроен позднее,
-shared control secret должен быть отдельным случайным значением не короче 32
-символов и совпадать в bot/web env. После добавления Rules
+URL/shared secrets; D2.13 делает это только когда все шесть pairing keys
+отсутствуют. Уже complete exact pairing переиспользуется без rotation; partial
+или mismatched state fail-closed. Shared control secret является отдельным
+случайным значением не короче 32 символов и совпадает в bot/web env. После
+добавления Rules
 Admin web connection создаётся с `read_only=False`, поэтому PostgreSQL connection
 не получает `default_transaction_read_only=on`. Это не означает право записи во
 всю схему: production Web Admin DB role должна получать только необходимые
@@ -285,15 +358,20 @@ config. Updater использует уже подготовленный user/ru
 наборе canonical markers и не чинит partial state. Application code сохраняет
 безопасный fallback `Unknown`, если Git или metadata недоступны.
 
-Перед обновлением complete D2.12 installation updater проверяет canonical
+Перед обновлением complete D2.12/D2.13 installation updater проверяет canonical
 owner/group/mode каталогов, env и unit и требует `kanami-web-admin.service` в
 точном state `inactive`. Active или недостоверный state останавливает update до
 `git pull`; автоматического stop/start/restart нет. После успешных migrations
 updater refresh-ит web unit и выполняет `daemon-reload`, не запуская service.
+После production activation сначала явно выполните
+`sudo systemctl stop kanami-web-admin.service`; updater не управляет Caddy и не
+выполняет silent stop/start Web Admin.
 
 ## Checklist перед публикацией
 
 - [ ] Public DNS настроен.
+- [ ] Inbound TCP/80 и TCP/443 приводят к managed Caddy host.
+- [ ] Для recommended topology выполнен `sudo kanami web-setup`.
 - [ ] Установлен действующий публичный TLS certificate.
 - [ ] `WEB_ADMIN_COOKIE_SECURE=true`.
 - [ ] OAuth redirect совпадает в точности.

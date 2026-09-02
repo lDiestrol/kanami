@@ -550,6 +550,7 @@ def test_help_aliases_show_the_same_help(argument: str) -> None:
     assert "start      Start the main Kanami bot service" in result.stdout
     assert "stop       Stop the main Kanami bot service" in result.stdout
     assert "update     Run the trusted production updater" in result.stdout
+    assert "web-setup  Activate a complete Web Admin installation" in result.stdout
     assert "menu" in result.stdout
     assert result.stderr == ""
 
@@ -565,7 +566,7 @@ def test_version_shows_manager_name_and_optional_git_commit() -> None:
     )
 
 
-def test_menu_preserves_existing_numbering_adds_update_and_exits() -> None:
+def test_menu_preserves_existing_numbering_adds_web_setup_and_exits() -> None:
     result = run_manager("menu", input_text="0\n")
 
     assert result.returncode == 0
@@ -578,8 +579,9 @@ def test_menu_preserves_existing_numbering_adds_update_and_exits() -> None:
     assert "7. Start bot" in result.stdout
     assert "8. Stop bot" in result.stdout
     assert "9. Update" in result.stdout
+    assert "10. Activate Web Admin for production" in result.stdout
     assert "0. Exit" in result.stdout
-    assert "Select an option [0-9]:" in result.stdout
+    assert "Select an option [0-10]:" in result.stdout
     assert "Install" not in result.stdout
     assert "Backup" not in result.stdout
     assert "Restore" not in result.stdout
@@ -638,7 +640,7 @@ def test_menu_invalid_choice_returns_to_menu() -> None:
     result = run_manager("menu", input_text="invalid\n0\n")
 
     assert result.returncode == 0
-    assert "Invalid choice: invalid. Select a number from 0 to 9." in result.stdout
+    assert "Invalid choice: invalid. Select a number from 0 to 10." in result.stdout
     assert result.stdout.count("1. Status") == 2
     assert "Goodbye." in result.stdout
 
@@ -1492,6 +1494,40 @@ def test_update_wrapper_does_not_duplicate_workflow_or_escalate() -> None:
         "git clean",
     ):
         assert forbidden not in update_source
+
+
+def test_web_setup_uses_only_canonical_trusted_production_script() -> None:
+    source = MANAGER_SCRIPT.read_text(encoding="utf-8")
+    run_source = shell_function_source("run_web_setup")
+    trust_source = shell_function_source("validate_web_setup_script")
+
+    assert (
+        'readonly WEB_SETUP_SCRIPT="/opt/kanami/scripts/web-admin-setup.sh"' in source
+    )
+    assert '"${UPDATE_BASH}" "${WEB_SETUP_SCRIPT}"' in run_source
+    assert 'validate_update_directory "${UPDATE_CHECKOUT}"' in run_source
+    assert 'validate_update_directory "${UPDATE_SCRIPTS_DIR}"' in run_source
+    assert "validate_web_setup_script" in run_source
+    assert "[[ -L ${WEB_SETUP_SCRIPT} ]]" in trust_source
+    assert '[[ ${metadata} == "0 0 755" ]]' in trust_source
+    for override in (
+        "KANAMI_MANAGER_INSTALL_DIR",
+        "KANAMI_MANAGER_WEB_SETUP",
+        "PWD",
+        "BASH_SOURCE",
+    ):
+        assert override not in run_source
+        assert override not in trust_source
+
+
+def test_web_setup_is_direct_command_and_rejects_arguments() -> None:
+    source = MANAGER_SCRIPT.read_text(encoding="utf-8")
+    main_source = shell_function_source("main")
+
+    assert "web-setup)" in main_source
+    assert "lifecycle_usage_error web-setup" in main_source
+    assert "run_web_setup" in main_source
+    assert "Web setup usage: sudo kanami web-setup" in source
 
 
 def test_restart_validates_unit_and_post_restart_active_state() -> None:

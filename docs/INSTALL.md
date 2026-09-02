@@ -55,6 +55,7 @@ sudo kanami start
 sudo kanami stop
 sudo kanami restart
 sudo kanami update
+sudo kanami web-setup
 kanami menu
 ```
 
@@ -111,6 +112,14 @@ workflow: сначала он проверяет root и bootstrap trust цеп�
 confirmation не требует. Полный ownership invariant checkout затем повторно
 проверяет сам updater как defense-in-depth.
 
+D2.13 добавляет отдельную root-only операцию `sudo kanami web-setup`. Manager
+проверяет canonical root-owned `/opt/kanami`, `scripts` и executable
+`/opt/kanami/scripts/web-admin-setup.sh`, после чего запускает его только через
+fixed `/usr/bin/bash`. Read-only path overrides Manager не влияют на эту
+mutation. Команда требует полностью подготовленный D2.12 Web Admin, публичный
+DNS и отдельное финальное подтверждение внутри setup script; Core-only и
+частичные installations отклоняются до изменений.
+
 При запуске `kanami` без аргументов интерактивное меню открывается только когда
 stdin и stdout являются TTY. В pipeline, cron и CI manager показывает help и не
 ожидает input. Явная команда `kanami menu` сохраняет пункты 1–4 для Status,
@@ -127,9 +136,14 @@ Menu restart требует отдельного подтверждения: `y`
 code, потому что updater мог уже refresh-нуть `/usr/local/bin/kanami`. Для новой
 session нужно снова запустить `kanami`.
 
-Manager не читает env-файлы и пока не выполняет PostgreSQL, Alembic или HTTP
-проверки. Install, Web Admin lifecycle, enable/disable,
-backup/restore/rollback и другие lifecycle actions пока отсутствуют.
+Пункт `10. Activate Web Admin for production` вызывает тот же canonical
+`web-setup`. Он не обходит production trust или финальное подтверждение.
+
+Обычные read-only команды Manager не читают env-файлы и не обращаются к Bot
+Control. Только отдельный `web-setup` делегирует canonical deployment script
+bounded parsing двух protected env и обязательные local health checks. Общие Web
+Admin start/stop/log commands, backup/restore/rollback и PostgreSQL/Alembic
+doctor probes по-прежнему отсутствуют.
 
 ## Автоматизированная установка
 
@@ -289,10 +303,19 @@ Unit запускает `/opt/kanami/.venv/bin/discord-stats-bot` от поль�
 Если Web Admin выбран в wizard, installer подготавливает его отдельный user,
 runtime, env, DB role и unit, но намеренно не включает и не запускает service.
 Web env никогда не содержит `DISCORD_TOKEN` или Bot Control settings и не имеет
-доступа к core env. До первого запуска настройте reverse proxy/TLS/domain,
-сверьте OAuth redirect и выполните шаги из
-[WEB_ADMIN_DEPLOYMENT.md](WEB_ADMIN_DEPLOYMENT.md). Это завершение публичного
-deployment относится к D2.13, а не к installer foundation D2.12.
+доступа к core env. После D2.12 выполните отдельные шаги:
+
+1. создайте public DNS record для hostname из точного OAuth callback;
+2. убедитесь, что inbound TCP/80 и TCP/443 приводят к этой VM;
+3. запустите `sudo kanami web-setup`;
+4. выполните browser OAuth/read/write smoke checklist из
+   [WEB_ADMIN_DEPLOYMENT.md](WEB_ADMIN_DEPLOYMENT.md);
+5. только после browser smoke при необходимости включите HSTS вручную.
+
+`web-setup` устанавливает Debian package `caddy` из настроенных системных APT
+sources, сам не добавляет внешний apt repository и не меняет firewall. В
+стандартном Debian 13 этот package доступен в official repository. Existing same-host/remote proxy deployments
+остаются ручными: automation не переписывает Nginx, Traefik или чужой Caddyfile.
 
 ## Проверка установки
 
@@ -358,6 +381,12 @@ user data и config updater не удаляет.
 recursive permission repair. После migrations ACL policy применяется повторно,
 canonical web unit обновляется как `root:root`/`0644` и выполняется
 `daemon-reload`; Web Admin не запускается и не перезапускается.
+
+После D2.13 Web Admin обычно active. Перед каждым `sudo kanami update` оператор
+обязан явно выполнить `sudo systemctl stop kanami-web-admin.service`; updater
+намеренно не делает silent stop/start и fail-closed до `git pull`, если unit
+active или его состояние неоднозначно. Lifecycle Caddy updater-у Kanami не
+принадлежит.
 
 Внутренняя проверка updater-а подтверждает invariant уже доверенной canonical
 installation и обнаруживает последующий ownership drift. Она не является

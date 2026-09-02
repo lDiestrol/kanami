@@ -11,6 +11,7 @@ readonly MAX_LOG_LINES=1000
 readonly UPDATE_CHECKOUT="/opt/kanami"
 readonly UPDATE_SCRIPTS_DIR="/opt/kanami/scripts"
 readonly UPDATE_SCRIPT="/opt/kanami/scripts/update.sh"
+readonly WEB_SETUP_SCRIPT="/opt/kanami/scripts/web-admin-setup.sh"
 readonly UPDATE_BASH="/usr/bin/bash"
 readonly UPDATE_STAT="/usr/bin/stat"
 readonly PRODUCTION_GIT_DIR="${UPDATE_CHECKOUT}/.git"
@@ -44,10 +45,12 @@ Commands:
   start      Start the main Kanami bot service
   stop       Stop the main Kanami bot service
   update     Run the trusted production updater
+  web-setup  Activate a complete Web Admin installation for production
   menu       Open the interactive menu
 
 Logs usage: kanami logs [--lines N]
 Update usage: sudo kanami update
+Web setup usage: sudo kanami web-setup
 EOF
 }
 
@@ -64,6 +67,7 @@ Kanami Manager
 7. Start bot
 8. Stop bot
 9. Update
+10. Activate Web Admin for production
 0. Exit
 EOF
 }
@@ -134,7 +138,7 @@ show_menu() {
 
     while true; do
         show_menu_options
-        printf 'Select an option [0-9]: '
+        printf 'Select an option [0-10]: '
         if ! IFS= read -r choice; then
             printf '\nEnd of input; exiting.\n'
             return 0
@@ -202,12 +206,17 @@ show_menu() {
                     printf 'Update was not started.\n'
                 fi
                 ;;
+            10)
+                if ! run_web_setup; then
+                    printf 'Web Admin production activation failed or was declined.\n' >&2
+                fi
+                ;;
             0)
                 printf 'Goodbye.\n'
                 return 0
                 ;;
             *)
-                printf 'Invalid choice: %s. Select a number from 0 to 9.\n' \
+                printf 'Invalid choice: %s. Select a number from 0 to 10.\n' \
                     "${choice}"
                 ;;
         esac
@@ -432,6 +441,32 @@ validate_update_script() {
     validate_update_path_metadata "${UPDATE_SCRIPT}" "updater"
 }
 
+validate_web_setup_script() {
+    local metadata
+
+    if [[ ! -f ${WEB_SETUP_SCRIPT} || ! -r ${WEB_SETUP_SCRIPT} || \
+        ! -x ${WEB_SETUP_SCRIPT} ]]; then
+        printf '%s: web-setup trust check failed: canonical setup script is missing or not executable\n' \
+            "${PROGRAM_NAME}" >&2
+        return 1
+    fi
+    if [[ -L ${WEB_SETUP_SCRIPT} ]]; then
+        printf '%s: web-setup trust check failed: canonical setup script must not be a symlink\n' \
+            "${PROGRAM_NAME}" >&2
+        return 1
+    fi
+    metadata="$("${UPDATE_STAT}" --format='%u %g %a' -- "${WEB_SETUP_SCRIPT}")" || {
+        printf '%s: web-setup trust check failed: cannot inspect canonical setup script\n' \
+            "${PROGRAM_NAME}" >&2
+        return 1
+    }
+    [[ ${metadata} == "0 0 755" ]] || {
+        printf '%s: web-setup trust check failed: canonical setup script must be root:root 0755\n' \
+            "${PROGRAM_NAME}" >&2
+        return 1
+    }
+}
+
 validate_update_bootstrap_trust() {
     validate_update_directory "${UPDATE_CHECKOUT}" "production checkout" || \
         return 1
@@ -461,6 +496,29 @@ run_update() {
 
     UPDATE_INVOKED=1
     "${UPDATE_BASH}" "${UPDATE_SCRIPT}"
+}
+
+run_web_setup() {
+    if ((EUID != 0)); then
+        printf '%s: web-setup requires root; run: sudo %s web-setup\n' \
+            "${PROGRAM_NAME}" "${PROGRAM_NAME}" >&2
+        return 1
+    fi
+    if [[ ! -x ${UPDATE_BASH} ]]; then
+        printf '%s: cannot run web-setup: %s is unavailable\n' \
+            "${PROGRAM_NAME}" "${UPDATE_BASH}" >&2
+        return 1
+    fi
+    if [[ ! -x ${UPDATE_STAT} ]]; then
+        printf '%s: cannot run web-setup: %s is unavailable\n' \
+            "${PROGRAM_NAME}" "${UPDATE_STAT}" >&2
+        return 1
+    fi
+    validate_update_directory "${UPDATE_CHECKOUT}" "production checkout" || return 1
+    validate_update_directory "${UPDATE_SCRIPTS_DIR}" "scripts directory" || return 1
+    validate_web_setup_script || return 1
+
+    "${UPDATE_BASH}" "${WEB_SETUP_SCRIPT}"
 }
 
 validate_bot_lifecycle_action() {
@@ -1130,6 +1188,14 @@ main() {
                 lifecycle_usage_error update
             else
                 run_update
+            fi
+            ;;
+        web-setup)
+            shift
+            if (($# > 0)); then
+                lifecycle_usage_error web-setup
+            else
+                run_web_setup
             fi
             ;;
         menu)

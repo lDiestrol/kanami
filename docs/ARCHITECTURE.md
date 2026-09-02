@@ -1344,6 +1344,65 @@ reacceptance workflow намеренно отложены.
   DNS, firewall, public OAuth verification и Bot Control остаются вне D2.12;
   публичное deployment completion — D2.13. Ошибка после confirmation может
   оставить partial state и требует inspection, без rollback illusion.
+- D2.13 является отдельной root-only canonical operation `sudo kanami
+  web-setup`, а не продолжением обычного installer. Manager проверяет bootstrap
+  trust `/opt/kanami`, `scripts` и exact executable setup script, затем запускает
+  только `/usr/bin/bash /opt/kanami/scripts/web-admin-setup.sh`; D2.2 read-only
+  path overrides не являются mutation authority. Сам setup повторяет полный
+  checkout ownership/non-writability contract перед использованием tracked
+  Caddy template.
+- До D2.13 confirmation разрешены только read-only complete-D2.12 metadata,
+  bounded exact-key env, core activation, OAuth hostname, DNS и proxy/package
+  checks. `/etc/kanami` обязан оставаться real `root:kanami` `0750`, primary и
+  numeric supplementary groups `kanami`/`kanami-web` взаимно изолированы, а
+  core unit уже loaded, active и enabled. Protected env никогда не
+  source/eval-ится, duplicate critical key неоднозначен. Managed Web backend
+  допускает только explicit `127.0.0.1:8000`, Secure cookie и выключенный либо
+  отсутствующий private-bind opt-in; drift не repair-ится. Managed hostname
+  выводится только из exact HTTPS OAuth callback, не может быть
+  localhost/IP/wildcard и совпадает с Caddy site address.
+- Bot Control pairing имеет два допустимых initial states: все шесть core/web
+  keys отсутствуют либо complete exact loopback pairing уже существует. Первый
+  случай создаёт один in-process `openssl rand -hex 32` secret и отдельные
+  same-directory replacements `root:kanami` и `root:kanami-web`: random-name
+  staging всегда `0600`, а canonical env получает `0640` только после rename;
+  второй не вращает secret. Partial/contradictory/mismatched state fail-closed.
+  Cross-file atomicity не обещается, поэтому failure после первого rename явно
+  требует manual inspection. Secret не попадает в Git, logs или argv.
+- D2.13 автоматизирует ровно topology `Caddy :80/:443 ->
+  127.0.0.1:8000`. Production artifact генерируется из tracked placeholder
+  template, публикует только redirect `/` и `/admin/*`, оставляет остальные
+  paths `404` и не включает HSTS. Foreign Caddy/Nginx/Traefik не merge-ится;
+  existing/remote proxy deployments остаются manual. Caddy устанавливается
+  только package name из configured system APT sources; Kanami не добавляет
+  сторонний apt source. До mutation отсутствующий package требует полностью
+  отсутствующий `/etc/caddy`/unit state, а установленный — trusted directory,
+  exact config, изолированный Debian service identity, canonical effective
+  vendor `FragmentPath`, пустой effective `DropInPaths` и inactive+disabled
+  `caddy-api.service`. `/lib` fragment принимается только когда fixed
+  `readlink -f` подтверждает merged-/usr equivalence с canonical `/usr/lib`
+  unit. Поскольку Debian maintainer script enable/start-ит новый service,
+  first install защищён узкой временной systemd mask; package-created enablement
+  обоих Caddy units снимается до smoke, а unexpected first start на failure path
+  best-effort останавливается до удаления только собственной mask. `apt-get`
+  выполняется в scoped `umask 022`; `/var/lib/caddy` обязан быть real,
+  `caddy:caddy` и non-writable для group/other без permission repair как сразу
+  после package install, так и при повторном installed-Caddy preflight. Config
+  validate выполняется от изолированного Debian `caddy` user с его service home;
+  этот user не может состоять в `kanami`/`kanami-web`, production Caddyfile
+  остаётся `root:root` `0644`.
+- Activation order фиксирован: env pairing; managed Caddy fmt/validate; core
+  restart/active check; authenticated loopback Bot Control probe; Web start и
+  bounded direct-TCP local database-backed health без proxy environment; Caddy
+  start/reload; best-effort direct-network public HTTPS HTTP-200 diagnostic;
+  enable Web/Caddy только после обязательных local smoke.
+  Public failure с VM может быть NAT hairpin artifact и не отменяет local
+  correctness. Firewall и Discord Developer Portal не меняются; browser OAuth,
+  break-glass OWNER, read/write и optional Rules smoke остаются human checklist.
+- D2.13 не добавляет общий Web lifecycle или updater orchestration. После
+  activation updater сохраняет fail-closed invariant: оператор сначала явно
+  останавливает `kanami-web-admin.service`; silent stop/start и Caddy lifecycle
+  updater-у не принадлежат.
 - Updater refresh-ит отдельный web runtime от `kanami-web` только при полном
   наборе canonical D2.12 markers, exact metadata и подтверждённом inactive
   systemd state. Эта pre-flight выполняется до pull/mutations; active,

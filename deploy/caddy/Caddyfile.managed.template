@@ -1,0 +1,16 @@
+# Managed by Kanami web-setup. Do not merge unrelated sites into this file.
+__KANAMI_PUBLIC_HOST__ {
+	# Caddy obtains and renews the public certificate automatically.
+	route {
+		@root path /
+		redir @root /admin/ 302
+
+		@web_admin path /admin/*
+		reverse_proxy @web_admin 127.0.0.1:8000
+
+		respond 404
+	}
+
+	# HSTS is intentionally disabled until the operator completes browser,
+	# Discord OAuth, break-glass owner, read and controlled-write smoke tests.
+}
