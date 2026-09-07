@@ -26,6 +26,7 @@ RULES_REVISION = "b6e2c8f91a47"
 RULES_PUBLICATION_REVISION = "e1a7c4d92b60"
 RULES_COMPLIANCE_REVISION = "a4f6c8d21e73"
 MEMBER_AVATAR_REVISION = "d4e8a1c7b962"
+CAPABILITIES_REVISION = "5c8e2a7d9f31"
 TABLE_ORDER = (
     "guilds",
     "discord_users",
@@ -81,6 +82,7 @@ def test_alembic_history_is_linear() -> None:
     revisions = list(script_directory.walk_revisions())
 
     assert [item.revision for item in revisions] == [
+        CAPABILITIES_REVISION,
         MEMBER_AVATAR_REVISION,
         RULES_COMPLIANCE_REVISION,
         RULES_PUBLICATION_REVISION,
@@ -97,22 +99,23 @@ def test_alembic_history_is_linear() -> None:
         AUDIT_REVISION,
         INITIAL_REVISION,
     ]
-    assert script_directory.get_heads() == [MEMBER_AVATAR_REVISION]
-    assert revisions[0].down_revision == RULES_COMPLIANCE_REVISION
-    assert revisions[1].down_revision == RULES_PUBLICATION_REVISION
-    assert revisions[2].down_revision == RULES_REVISION
-    assert revisions[3].down_revision == OPERATIONAL_HEALTH_REVISION
-    assert revisions[4].down_revision == GAME_TRACKING_REVISION
-    assert revisions[5].down_revision == SERVER_SETTINGS_REVISION
-    assert revisions[6].down_revision == WEB_ADMIN_ACCESS_REVISION
-    assert revisions[7].down_revision == DISCORD_IDENTITY_REVISION
-    assert revisions[8].down_revision == MEMBER_RETURN_REVISION
-    assert revisions[9].down_revision == ANNIVERSARY_REVISION
-    assert revisions[10].down_revision == ACHIEVEMENTS_REVISION
-    assert revisions[11].down_revision == TEXT_ACTIVITY_REVISION
-    assert revisions[12].down_revision == AUDIT_REVISION
-    assert revisions[13].down_revision == INITIAL_REVISION
-    assert revisions[14].down_revision is None
+    assert script_directory.get_heads() == [CAPABILITIES_REVISION]
+    assert revisions[0].down_revision == MEMBER_AVATAR_REVISION
+    assert revisions[1].down_revision == RULES_COMPLIANCE_REVISION
+    assert revisions[2].down_revision == RULES_PUBLICATION_REVISION
+    assert revisions[3].down_revision == RULES_REVISION
+    assert revisions[4].down_revision == OPERATIONAL_HEALTH_REVISION
+    assert revisions[5].down_revision == GAME_TRACKING_REVISION
+    assert revisions[6].down_revision == SERVER_SETTINGS_REVISION
+    assert revisions[7].down_revision == WEB_ADMIN_ACCESS_REVISION
+    assert revisions[8].down_revision == DISCORD_IDENTITY_REVISION
+    assert revisions[9].down_revision == MEMBER_RETURN_REVISION
+    assert revisions[10].down_revision == ANNIVERSARY_REVISION
+    assert revisions[11].down_revision == ACHIEVEMENTS_REVISION
+    assert revisions[12].down_revision == TEXT_ACTIVITY_REVISION
+    assert revisions[13].down_revision == AUDIT_REVISION
+    assert revisions[14].down_revision == INITIAL_REVISION
+    assert revisions[15].down_revision is None
     assert all(callable(item.module.upgrade) for item in revisions)
     assert all(callable(item.module.downgrade) for item in revisions)
 
@@ -142,6 +145,8 @@ def test_upgrade_matches_metadata_constraints_and_indexes(
             "operational_health_observations",
             "rulesets",
             "rule_acceptances",
+            "guild_capability_policies",
+            "guild_capability_grants",
         }:
             continue
         for constraint in table.constraints:
@@ -631,4 +636,30 @@ def test_rules_compliance_revision_adds_nullable_bounded_grace(
     assert "requires_reacceptance" in upgrade_sql
     assert downgrade_sql.index("DROP CONSTRAINT") < downgrade_sql.index(
         "DROP COLUMN reacceptance_grace_days"
+    )
+
+
+def test_capabilities_revision_matches_models_and_downgrades(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    upgrade_sql = normalize_sql(
+        render_revision_operation(monkeypatch, "upgrade", CAPABILITIES_REVISION)
+    )
+    for table_name in ("guild_capability_policies", "guild_capability_grants"):
+        table = Base.metadata.tables[table_name]
+        assert f"CREATE TABLE {table_name}" in upgrade_sql
+        for constraint in table.constraints:
+            if constraint.name is not None:
+                assert f"CONSTRAINT {constraint.name}" in upgrade_sql
+    assert "PRIMARY KEY (guild_id, capability_key)" in upgrade_sql
+    assert "PRIMARY KEY (guild_id, capability_key, subject_type, subject_id)" in (
+        upgrade_sql
+    )
+    assert "subject_type IN ('user', 'role')" in upgrade_sql
+
+    downgrade_sql = normalize_sql(
+        render_revision_operation(monkeypatch, "downgrade", CAPABILITIES_REVISION)
+    )
+    assert downgrade_sql.index("DROP TABLE guild_capability_grants") < (
+        downgrade_sql.index("DROP TABLE guild_capability_policies")
     )

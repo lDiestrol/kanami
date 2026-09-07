@@ -3,6 +3,10 @@
 from discord_stats_bot.persistence.models.achievement import UserAchievement
 from discord_stats_bot.persistence.models.audit import AuditEvent
 from discord_stats_bot.persistence.models.base import Base
+from discord_stats_bot.persistence.models.capability import (
+    GuildCapabilityGrantModel,
+    GuildCapabilityPolicyModel,
+)
 from discord_stats_bot.persistence.models.game import GameSession
 from discord_stats_bot.persistence.models.guild import Guild
 from discord_stats_bot.persistence.models.member import GuildMember
@@ -27,6 +31,8 @@ __all__ = [
     "DailyTextActivity",
     "Guild",
     "GameSession",
+    "GuildCapabilityGrantModel",
+    "GuildCapabilityPolicyModel",
     "GuildMember",
     "OperationalHealthObservation",
     "RuleAcceptance",

@@ -2,6 +2,13 @@
 
 ## Текущее состояние проекта
 
+В ветке `feature/voice-move-access` реализован локальный A1 foundation
+управляемых capabilities: generic PostgreSQL policies/grants, Discord-независимая
+authorization и audit mutations. Зарегистрирован только `voice.move`, default
+disabled. Web Admin UI и `/move` runtime на A1 не реализованы; новых `.env`
+настроек нет. Production по-прежнему находится на прежнем состоянии и новую
+migration ещё не получал.
+
 Созданы Python-каркас, PostgreSQL persistence foundation, async Alembic
 infrastructure, Discord Gateway runtime, voice statistics, суточная Text
 Activity и durable Kanami Audit Logging. Runtime считает сообщения и replies без
@@ -63,6 +70,16 @@ G3B Server Game Analytics объединён с `main` в commit
 smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что уже выполнено
+
+- Реализован generic capability registry и типизированные policy/grant/decision
+  contracts. Authorization использует порядок: disabled → guild owner → user
+  grant → role grant → not granted и не принимает Discord permission bits.
+- Добавлены caller-owned SQLAlchemy repository и migration `5c8e2a7d9f31` от
+  `d4e8a1c7b962` для `guild_capability_policies` и
+  `guild_capability_grants`. Mutations сериализуются существующим PostgreSQL
+  advisory transaction lock pattern и идемпотентны.
+- Capability policy/grant/revoke записывают important history-only audit events
+  существующей подсистемой; no-op mutation audit не создаёт.
 
 - Реализован G3A Member Game Analytics без нового route, migration и изменений
   Game Tracking collection: отдельный Web Admin service выполняет один
@@ -956,6 +973,10 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
   application exceptions; присутствовали успешные OAuth/authorization entries.
 
 ## Что сейчас делается
+
+A1 capability foundation реализован в текущей feature-ветке и проходит локальные
+quality gates. Интеграция с Web Admin и Discord `/move` сознательно отложена на
+следующие этапы.
 
 WUI-4A.1 и оба responsive hotfix развёрнуты в production. Первый hotfix исправил
 расположение compact-кнопки «Профиль» справа в member row на tablet width. Второй

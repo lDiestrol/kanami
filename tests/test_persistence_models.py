@@ -25,6 +25,8 @@ from discord_stats_bot.persistence.models import (
     DiscordUser,
     GameSession,
     Guild,
+    GuildCapabilityGrantModel,
+    GuildCapabilityPolicyModel,
     GuildMember,
     GuildServerSettings,
     OperationalHealthObservation,
@@ -42,6 +44,8 @@ EXPECTED_TABLES = {
     "discord_users",
     "daily_text_activity",
     "guild_members",
+    "guild_capability_grants",
+    "guild_capability_policies",
     "guild_server_settings",
     "game_sessions",
     "voice_channels",
@@ -67,6 +71,14 @@ def test_all_business_models_register_on_shared_metadata() -> None:
     assert DailyTextActivity.__table__ is Base.metadata.tables["daily_text_activity"]
     assert GameSession.__table__ is Base.metadata.tables["game_sessions"]
     assert GuildMember.__table__ is Base.metadata.tables["guild_members"]
+    assert (
+        GuildCapabilityGrantModel.__table__
+        is Base.metadata.tables["guild_capability_grants"]
+    )
+    assert (
+        GuildCapabilityPolicyModel.__table__
+        is Base.metadata.tables["guild_capability_policies"]
+    )
     assert (
         OperationalHealthObservation.__table__
         is Base.metadata.tables["operational_health_observations"]
@@ -118,6 +130,21 @@ def test_table_columns_match_approved_schema() -> None:
             "left_at",
             "nickname",
             "guild_avatar_hash",
+        },
+        "guild_capability_policies": {
+            "guild_id",
+            "capability_key",
+            "enabled",
+            "updated_at",
+            "updated_by_user_id",
+        },
+        "guild_capability_grants": {
+            "guild_id",
+            "capability_key",
+            "subject_type",
+            "subject_id",
+            "created_at",
+            "created_by_user_id",
         },
         "guild_server_settings": {
             "guild_id",
@@ -229,6 +256,13 @@ def test_primary_keys_match_approved_schema() -> None:
             "activity_date",
         ),
         "guild_members": ("guild_id", "user_id"),
+        "guild_capability_policies": ("guild_id", "capability_key"),
+        "guild_capability_grants": (
+            "guild_id",
+            "capability_key",
+            "subject_type",
+            "subject_id",
+        ),
         "guild_server_settings": ("guild_id",),
         "game_sessions": ("id",),
         "operational_health_observations": ("id",),

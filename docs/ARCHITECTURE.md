@@ -14,6 +14,38 @@
 
 ## Принятые архитектурные решения
 
+### Managed capabilities foundation (A1)
+
+Внутренние управляемые права Kanami представлены Discord-независимыми
+capability keys. Явный code registry является allowlist поддерживаемых прав и
+источником default state; в A1 зарегистрирован только `voice.move`, выключенный
+по умолчанию. Неизвестный key отклоняется application service, а добавление
+нового capability требует изменения registry, но не схемы БД.
+
+Текущее состояние хранится в generic PostgreSQL-таблицах
+`guild_capability_policies` и `guild_capability_grants`. Отсутствующая policy row
+разрешается через registry default. Поэтому изменение `default_enabled` уже
+выпущенного capability с `false` на `true` является behavioral migration и не
+должно выполняться простым изменением registry; новые административные
+capabilities должны безопасно появляться выключенными по умолчанию. Grants имеют
+единый subject discriminator
+`user`/`role`, composite identity и удаляются при revoke; исторические revoked
+rows не хранятся. Mutation repository работает в caller-owned transaction,
+сериализует изменения guild через PostgreSQL advisory transaction lock и не
+выполняет скрытых commit/rollback.
+
+Authorization сначала проверяет effective enabled state, затем Discord Guild
+Owner, direct user grant и наличие хотя бы одной role grant; иначе возвращается
+deny с типизированной причиной. Discord permission bits не входят в API и не
+дают неявного доступа. Idempotent no-op mutations не создают audit. Реальные
+изменения policy/grant/revoke сохраняют important history-only события
+`web_admin.capability_policy_changed`, `web_admin.capability_granted` и
+`web_admin.capability_revoked` в той же caller-owned transaction.
+
+A1 не добавляет `.env`-конфигурацию, Web Admin UI/routes, `/move` slash-команду
+или voice move runtime. Capability foundation отвечает только за доступ к
+действию Kanami; runtime-specific preconditions принадлежат последующим этапам.
+
 Статус перечисленных ниже решений: принято. Дата фиксации: 2026-08-10.
 
 ### Python и управление проектом
