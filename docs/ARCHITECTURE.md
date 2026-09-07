@@ -46,6 +46,23 @@ A1 не добавляет `.env`-конфигурацию, Web Admin UI/routes,
 или voice move runtime. Capability foundation отвечает только за доступ к
 действию Kanami; runtime-specific preconditions принадлежат последующим этапам.
 
+A2.1 добавляет только authenticated read-only Web Admin presentation
+registry definitions и текущих policy/grants. Web слой материализует исключительно
+definitions из registry, а имена сохранённых role/member grants получает через
+существующий fixed-purpose Bot Control из cache configured guild без Discord API
+запросов; Web client дедуплицирует ID и разбивает lookup на batches не более 250
+subjects total, а failure любого batch не возвращает partial labels. Успешный
+lookup отличает отсутствующий объект от временно недоступного lookup; во втором
+случае DB state остаётся доступным с явным degraded warning. Управление
+Web Admin и capability authorization остаются независимыми.
+
+A2.2 добавляет direct Web Admin POST mutation только для effective enabled state
+зарегистрированного capability. Она повторно использует A1
+`CapabilityMutationService` и в одном коротком Web-owned SQLAlchemy transaction
+сохраняет policy и existing audit event; Discord runtime и Bot Control для этой
+DB-only операции не нужны. POST защищён существующими CSRF, fresh Web Admin
+authorization и rate-limit boundaries.
+
 Статус перечисленных ниже решений: принято. Дата фиксации: 2026-08-10.
 
 ### Python и управление проектом

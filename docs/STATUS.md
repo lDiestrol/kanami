@@ -5,9 +5,10 @@
 В ветке `feature/voice-move-access` реализован локальный A1 foundation
 управляемых capabilities: generic PostgreSQL policies/grants, Discord-независимая
 authorization и audit mutations. Зарегистрирован только `voice.move`, default
-disabled. Web Admin UI и `/move` runtime на A1 не реализованы; новых `.env`
-настроек нет. Production по-прежнему находится на прежнем состоянии и новую
-migration ещё не получал.
+disabled. A2.2 добавляет на этой странице direct Web Admin enable/disable policy
+mutation через существующий A1 service и atomic audit transaction; grants и
+`/move` runtime всё ещё не реализованы, новых `.env`-настроек нет. Production
+по-прежнему находится на прежнем состоянии и новую migration ещё не получал.
 
 Созданы Python-каркас, PostgreSQL persistence foundation, async Alembic
 infrastructure, Discord Gateway runtime, voice statistics, суточная Text
@@ -80,6 +81,15 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
   advisory transaction lock pattern и идемпотентны.
 - Capability policy/grant/revoke записывают important history-only audit events
   существующей подсистемой; no-op mutation audit не создаёт.
+- A2.1 добавляет `/admin/capabilities` для OWNER и managed ADMIN: registry
+  остаётся allowlist отображаемых capabilities, отсутствующая policy row даёт
+  default state, а role/member labels читаются только из configured guild cache
+  через существующий Bot Control boundary. Stale Discord entities не ломают
+  страницу и показаны как unknown с secondary diagnostic ID; Web client
+  дедуплицирует IDs и batch-ит cache lookup до 250 subjects total без partial
+  labels при failure одного batch. Успешно отсутствующие Discord entities
+  отличаются от временно недоступного lookup, который оставляет DB state
+  видимым с degraded warning.
 
 - Реализован G3A Member Game Analytics без нового route, migration и изменений
   Game Tracking collection: отдельный Web Admin service выполняет один

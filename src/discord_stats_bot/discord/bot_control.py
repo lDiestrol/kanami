@@ -16,6 +16,9 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from discord_stats_bot.config import MAX_DISCORD_SNOWFLAKE
+from discord_stats_bot.discord.capability_presentation import (
+    CapabilityPresentationRuntimeUnavailableError,
+)
 from discord_stats_bot.discord.server_settings_control import (
     ServerSettingControlError,
     ServerSettingControlErrorCategory,
@@ -28,6 +31,7 @@ from discord_stats_bot.features.bot_profile import (
     normalize_bot_nickname,
     validate_bot_avatar,
 )
+from discord_stats_bot.features.capabilities import CapabilityPresentationSubjects
 from discord_stats_bot.features.rules import (
     RulesPublicationConfigurationResult,
     RulesPublicationConfigurationStatus,
@@ -103,6 +107,12 @@ class RulesPublicationOperator(Protocol):
 
 class ServerSettingsOptionsOperator(Protocol):
     async def get_options(self) -> ServerSettingsOptions: ...
+
+
+class CapabilityPresentationSubjectsOperator(Protocol):
+    async def get_subjects(
+        self, role_ids: tuple[int, ...], user_ids: tuple[int, ...]
+    ) -> CapabilityPresentationSubjects: ...
 
 
 class DiscordBotProfileService:
@@ -268,6 +278,9 @@ def create_bot_control_app(
     web_admin_access_operator: WebAdminAccessOperator | None = None,
     server_settings_operator: ServerSettingsOperator | None = None,
     server_settings_options_operator: ServerSettingsOptionsOperator | None = None,
+    capability_presentation_subjects_operator: (
+        CapabilityPresentationSubjectsOperator | None
+    ) = None,
     rules_publication_operator: RulesPublicationOperator | None = None,
 ) -> Starlette:
     """Create an API exposing only fixed bot-profile operations."""
@@ -483,6 +496,57 @@ def create_bot_control_app(
                         "type": option.type.value,
                     }
                     for option in options.channels
+                ],
+            }
+        )
+
+    async def get_capability_presentation_subjects(request: Request) -> Response:
+        if not _authorized(request, shared_secret):
+            return JSONResponse({"error": "control_unauthorized"}, status_code=401)
+        if capability_presentation_subjects_operator is None:
+            return JSONResponse(
+                {"error": "capability_presentation_unavailable"}, status_code=503
+            )
+        try:
+            role_ids = tuple(
+                int(value) for value in request.query_params.getlist("role_id")
+            )
+            user_ids = tuple(
+                int(value) for value in request.query_params.getlist("user_id")
+            )
+        except ValueError:
+            return JSONResponse({"error": "invalid_request"}, status_code=400)
+        if (
+            len(role_ids) > 250
+            or len(user_ids) > 250
+            or len(role_ids) + len(user_ids) > 250
+            or any(
+                not 0 < value <= MAX_DISCORD_SNOWFLAKE
+                for value in (*role_ids, *user_ids)
+            )
+        ):
+            return JSONResponse({"error": "invalid_request"}, status_code=400)
+        try:
+            subjects = await capability_presentation_subjects_operator.get_subjects(
+                role_ids, user_ids
+            )
+        except CapabilityPresentationRuntimeUnavailableError:
+            return JSONResponse({"error": "runtime_unavailable"}, status_code=503)
+        except Exception as error:
+            logger.exception(
+                "capability_presentation_subjects_failed error_type=%s",
+                type(error).__name__,
+            )
+            return JSONResponse(
+                {"error": "capability_presentation_failure"}, status_code=503
+            )
+        return JSONResponse(
+            {
+                "roles": [
+                    {"id": role_id, "name": name} for role_id, name in subjects.roles
+                ],
+                "members": [
+                    {"id": user_id, "name": name} for user_id, name in subjects.members
                 ],
             }
         )
@@ -724,6 +788,11 @@ def create_bot_control_app(
             Route(
                 "/control/v1/server-settings/options",
                 get_server_settings_options,
+                methods=["GET"],
+            ),
+            Route(
+                "/control/v1/capabilities/subjects",
+                get_capability_presentation_subjects,
                 methods=["GET"],
             ),
             Route(

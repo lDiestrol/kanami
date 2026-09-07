@@ -1,5 +1,8 @@
 """Managed Kanami capability feature exports."""
 
+from discord_stats_bot.features.capabilities.presentation import (
+    CapabilityPresentationSubjects,
+)
 from discord_stats_bot.features.capabilities.registry import (
     CAPABILITY_REGISTRY,
     VOICE_MOVE,
@@ -39,6 +42,7 @@ __all__ = [
     "CapabilityKey",
     "CapabilityMutationResult",
     "CapabilityMutationService",
+    "CapabilityPresentationSubjects",
     "CapabilityRepository",
     "CapabilitySubjectType",
     "GuildCapabilityPolicy",

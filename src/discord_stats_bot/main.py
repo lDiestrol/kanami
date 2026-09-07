@@ -15,6 +15,7 @@ from discord_stats_bot.discord import (
     AutoroleHandler,
     BotControlServer,
     DiscordBotProfileService,
+    DiscordCapabilityPresentationService,
     DiscordServerSettingsOptionsService,
     DiscordStatsClient,
     GameCheckpointRunner,
@@ -120,6 +121,10 @@ def _create_bot_control_server(
             wake_runtime=wake_delivery,
         ),
         server_settings_options_operator=DiscordServerSettingsOptionsService(
+            client,
+            guild_id=settings.discord_guild_id,
+        ),
+        capability_presentation_subjects_operator=DiscordCapabilityPresentationService(
             client,
             guild_id=settings.discord_guild_id,
         ),

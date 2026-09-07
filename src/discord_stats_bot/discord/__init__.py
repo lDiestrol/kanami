@@ -16,6 +16,9 @@ from discord_stats_bot.discord.bot_control import (
     DiscordBotProfileService,
     create_bot_control_app,
 )
+from discord_stats_bot.discord.capability_presentation import (
+    DiscordCapabilityPresentationService,
+)
 from discord_stats_bot.discord.game_statistics import (
     GAME_PERIOD_LABELS,
     GameStatisticsCommandHandler,
@@ -127,6 +130,7 @@ __all__ = [
     "DiscordStatsClient",
     "DiscordBotProfileService",
     "DiscordServerSettingsOptionsService",
+    "DiscordCapabilityPresentationService",
     "DatabaseHealth",
     "GuildReferenceProvisioner",
     "GuildReferenceProvisioningSummary",

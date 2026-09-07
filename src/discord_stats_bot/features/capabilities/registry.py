@@ -8,7 +8,16 @@ from discord_stats_bot.features.capabilities.types import (
 VOICE_MOVE = CapabilityKey("voice.move")
 
 CAPABILITY_REGISTRY: dict[CapabilityKey, CapabilityDefinition] = {
-    VOICE_MOVE: CapabilityDefinition(VOICE_MOVE, default_enabled=False),
+    VOICE_MOVE: CapabilityDefinition(
+        VOICE_MOVE,
+        default_enabled=False,
+        group="Voice moderation",
+        title="Move members",
+        description=(
+            "Управляемое право Kanami на перемещение участников между голосовыми "
+            "каналами."
+        ),
+    ),
 }
 
 

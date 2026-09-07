@@ -28,9 +28,14 @@ def _capability_key(value: CapabilityKey) -> None:
 class CapabilityDefinition:
     key: CapabilityKey
     default_enabled: bool = False
+    title: str = ""
+    description: str = ""
+    group: str = ""
 
     def __post_init__(self) -> None:
         _capability_key(self.key)
+        if not all((self.title.strip(), self.description.strip(), self.group.strip())):
+            raise ValueError("capability presentation metadata must not be empty")
 
 
 class CapabilitySubjectType(StrEnum):

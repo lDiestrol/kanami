@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import discord
@@ -12,6 +13,9 @@ from discord_stats_bot.discord.bot_control import (
     DiscordBotProfileService,
     create_bot_control_app,
 )
+from discord_stats_bot.discord.capability_presentation import (
+    CapabilityPresentationRuntimeUnavailableError,
+)
 from discord_stats_bot.features.bot_profile import (
     PNG_CONTENT_TYPE,
     PNG_SIGNATURE,
@@ -19,6 +23,7 @@ from discord_stats_bot.features.bot_profile import (
     BotProfileErrorCategory,
     BotProfileOperationError,
 )
+from discord_stats_bot.features.capabilities import CapabilityPresentationSubjects
 from discord_stats_bot.features.rules import (
     RulesPublicationConfigurationResult,
     RulesPublicationConfigurationStatus,
@@ -36,6 +41,7 @@ from discord_stats_bot.features.server_settings import (
 )
 from discord_stats_bot.web.bot_control import (
     AiohttpBotProfileControlClient,
+    CapabilityPresentationControlError,
     ServerSettingsControlCategory,
     ServerSettingsControlError,
 )
@@ -544,6 +550,25 @@ class FakeControlHttpSession:
         return self.response
 
 
+class CapabilitySubjectsHttpSession:
+    def __init__(self, *, malformed_batch: int | None = None) -> None:
+        self.calls: list[tuple[str, str, dict[str, object]]] = []
+        self.malformed_batch = malformed_batch
+
+    def request(self, method: str, url: str, **kwargs: object) -> FakeControlResponse:
+        self.calls.append((method, url, kwargs))
+        if self.malformed_batch == len(self.calls):
+            return FakeControlResponse(200, b'{"roles":"invalid","members":[]}')
+        params = kwargs["params"]
+        roles = [int(value) for key, value in params if key == "role_id"]
+        users = [int(value) for key, value in params if key == "user_id"]
+        payload = {
+            "roles": [{"id": value, "name": f"Role {value}"} for value in roles],
+            "members": [{"id": value, "name": f"Member {value}"} for value in users],
+        }
+        return FakeControlResponse(200, json.dumps(payload).encode())
+
+
 @pytest.mark.asyncio
 async def test_web_control_client_uses_fixed_endpoint_and_separate_secret() -> None:
     body = (
@@ -672,6 +697,53 @@ async def test_web_control_client_reads_options_without_actor_header() -> None:
 
 
 @pytest.mark.asyncio
+async def test_capability_subject_client_batches_deduplicates_and_aggregates() -> None:
+    http_session = CapabilitySubjectsHttpSession()
+    client = AiohttpBotProfileControlClient(
+        http_session,  # type: ignore[arg-type]
+        base_url="http://127.0.0.1:8765",
+        shared_secret=SecretStr(SHARED_SECRET),
+    )
+    roles = tuple(range(1, 252)) + (1, 2)
+    users = tuple(range(501, 752)) + (501,)
+
+    subjects = await client.get_capability_presentation_subjects(roles, users)
+
+    assert subjects.roles == tuple((value, f"Role {value}") for value in range(1, 252))
+    assert subjects.members == tuple(
+        (value, f"Member {value}") for value in range(501, 752)
+    )
+    assert len(http_session.calls) == 3
+    for method, url, kwargs in http_session.calls:
+        assert method == "GET"
+        assert url == "http://127.0.0.1:8765/control/v1/capabilities/subjects"
+        assert kwargs["headers"] == {"Authorization": f"Bearer {SHARED_SECRET}"}
+        assert kwargs["allow_redirects"] is False
+        assert sum(1 for key, _ in kwargs["params"] if key == "role_id") <= 250
+        assert sum(1 for key, _ in kwargs["params"] if key == "user_id") <= 250
+        assert len(kwargs["params"]) <= 250
+
+
+@pytest.mark.asyncio
+async def test_capability_subject_client_rejects_malformed_batch_without_partial_result() -> (
+    None
+):
+    http_session = CapabilitySubjectsHttpSession(malformed_batch=2)
+    client = AiohttpBotProfileControlClient(
+        http_session,  # type: ignore[arg-type]
+        base_url="http://127.0.0.1:8765",
+        shared_secret=SecretStr(SHARED_SECRET),
+    )
+
+    with pytest.raises(CapabilityPresentationControlError):
+        await client.get_capability_presentation_subjects(
+            tuple(range(1, 252)), tuple(range(501, 752))
+        )
+
+    assert len(http_session.calls) == 2
+
+
+@pytest.mark.asyncio
 async def test_web_control_client_writes_exact_setting_payload_and_session_actor() -> (
     None
 ):
@@ -752,7 +824,7 @@ def test_main_creates_control_server_only_when_enabled(
     access_service_calls: list[tuple[object, int]] = []
     server_settings_service = object()
     server_settings_options_service = object()
-    app_calls: list[tuple[object, object, object, object, object, object]] = []
+    app_calls: list[tuple[object, object, object, object, object, object, object]] = []
     server_calls: list[tuple[object, str, int]] = []
     monkeypatch.setattr(
         main_module,
@@ -776,10 +848,16 @@ def test_main_creates_control_server_only_when_enabled(
         "DiscordServerSettingsOptionsService",
         lambda *args, **kwargs: server_settings_options_service,
     )
+    capability_presentation_service = object()
+    monkeypatch.setattr(
+        main_module,
+        "DiscordCapabilityPresentationService",
+        lambda *args, **kwargs: capability_presentation_service,
+    )
     monkeypatch.setattr(
         main_module,
         "create_bot_control_app",
-        lambda operator, shared_secret, web_admin_access_operator, server_settings_operator, server_settings_options_operator, rules_publication_operator: (
+        lambda operator, shared_secret, web_admin_access_operator, server_settings_operator, server_settings_options_operator, capability_presentation_subjects_operator, rules_publication_operator: (
             app_calls.append(
                 (
                     operator,
@@ -787,6 +865,7 @@ def test_main_creates_control_server_only_when_enabled(
                     web_admin_access_operator,
                     server_settings_operator,
                     server_settings_options_operator,
+                    capability_presentation_subjects_operator,
                     rules_publication_operator,
                 )
             )
@@ -818,6 +897,7 @@ def test_main_creates_control_server_only_when_enabled(
             access_service,
             server_settings_service,
             server_settings_options_service,
+            capability_presentation_service,
             None,
         )
     ]
@@ -873,6 +953,86 @@ class FakeServerSettingsOptionsOperator:
                 ),
             ),
         )
+
+
+class FakeCapabilitySubjectsOperator:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+        self.calls: list[tuple[tuple[int, ...], tuple[int, ...]]] = []
+
+    async def get_subjects(
+        self, role_ids: tuple[int, ...], user_ids: tuple[int, ...]
+    ) -> CapabilityPresentationSubjects:
+        self.calls.append((role_ids, user_ids))
+        if self.error is not None:
+            raise self.error
+        return CapabilityPresentationSubjects(
+            tuple((role_id, f"Role {role_id}") for role_id in role_ids),
+            tuple((user_id, f"Member {user_id}") for user_id in user_ids),
+        )
+
+
+def test_capability_subjects_endpoint_is_authenticated_bounded_and_typed() -> None:
+    subjects = FakeCapabilitySubjectsOperator()
+    app = create_bot_control_app(
+        FakeOperator(),
+        shared_secret=SecretStr(SHARED_SECRET),
+        capability_presentation_subjects_operator=subjects,
+    )
+    too_many = "&".join(f"role_id={index}" for index in range(1, 252))
+    with TestClient(app) as client:
+        unauthorized = client.get("/control/v1/capabilities/subjects")
+        invalid = client.get(
+            "/control/v1/capabilities/subjects?role_id=0",
+            headers={"Authorization": f"Bearer {SHARED_SECRET}"},
+        )
+        oversized = client.get(
+            f"/control/v1/capabilities/subjects?{too_many}",
+            headers={"Authorization": f"Bearer {SHARED_SECRET}"},
+        )
+        combined = client.get(
+            "/control/v1/capabilities/subjects?"
+            + "&".join(
+                [
+                    *(f"role_id={index}" for index in range(1, 126)),
+                    *(f"user_id={index}" for index in range(126, 252)),
+                ]
+            ),
+            headers={"Authorization": f"Bearer {SHARED_SECRET}"},
+        )
+        response = client.get(
+            "/control/v1/capabilities/subjects?role_id=20&user_id=30",
+            headers={"Authorization": f"Bearer {SHARED_SECRET}"},
+        )
+
+    assert unauthorized.status_code == 401
+    assert invalid.status_code == 400
+    assert oversized.status_code == 400
+    assert combined.status_code == 400
+    assert response.status_code == 200
+    assert response.json() == {
+        "roles": [{"id": 20, "name": "Role 20"}],
+        "members": [{"id": 30, "name": "Member 30"}],
+    }
+    assert subjects.calls == [((20,), (30,))]
+
+
+def test_capability_subjects_endpoint_maps_runtime_unavailable_to_503() -> None:
+    app = create_bot_control_app(
+        FakeOperator(),
+        shared_secret=SecretStr(SHARED_SECRET),
+        capability_presentation_subjects_operator=FakeCapabilitySubjectsOperator(
+            CapabilityPresentationRuntimeUnavailableError()
+        ),
+    )
+    with TestClient(app) as client:
+        response = client.get(
+            "/control/v1/capabilities/subjects",
+            headers={"Authorization": f"Bearer {SHARED_SECRET}"},
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {"error": "runtime_unavailable"}
 
 
 def test_server_settings_options_requires_bearer_and_has_bounded_contract() -> None:
