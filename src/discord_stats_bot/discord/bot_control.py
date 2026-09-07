@@ -114,6 +114,8 @@ class CapabilityPresentationSubjectsOperator(Protocol):
         self, role_ids: tuple[int, ...], user_ids: tuple[int, ...]
     ) -> CapabilityPresentationSubjects: ...
 
+    async def get_role_options(self) -> tuple[tuple[int, str], ...]: ...
+
 
 class DiscordBotProfileService:
     """Edit only the configured guild's own bot member through discord.py."""
@@ -551,6 +553,31 @@ def create_bot_control_app(
             }
         )
 
+    async def get_capability_role_options(request: Request) -> Response:
+        if not _authorized(request, shared_secret):
+            return JSONResponse({"error": "control_unauthorized"}, status_code=401)
+        if capability_presentation_subjects_operator is None:
+            return JSONResponse(
+                {"error": "capability_presentation_unavailable"}, status_code=503
+            )
+        try:
+            roles = await capability_presentation_subjects_operator.get_role_options()
+        except CapabilityPresentationRuntimeUnavailableError:
+            return JSONResponse({"error": "runtime_unavailable"}, status_code=503)
+        except Exception as error:
+            logger.exception(
+                "capability_role_options_failed error_type=%s", type(error).__name__
+            )
+            return JSONResponse(
+                {"error": "capability_presentation_failure"}, status_code=503
+            )
+        return JSONResponse(
+            {
+                "roles": [{"id": role_id, "name": name} for role_id, name in roles],
+                "members": [],
+            }
+        )
+
     async def get_profile(request: Request) -> Response:
         return await execute(
             request,
@@ -793,6 +820,11 @@ def create_bot_control_app(
             Route(
                 "/control/v1/capabilities/subjects",
                 get_capability_presentation_subjects,
+                methods=["GET"],
+            ),
+            Route(
+                "/control/v1/capabilities/roles",
+                get_capability_role_options,
                 methods=["GET"],
             ),
             Route(

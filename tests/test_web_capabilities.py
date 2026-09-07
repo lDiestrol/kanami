@@ -26,6 +26,7 @@ from discord_stats_bot.web.authorization import (
 from discord_stats_bot.web.capabilities import (
     WebAdminCapabilitiesReadService,
     WebAdminCapabilityGrant,
+    WebAdminCapabilityRoleOption,
     WebAdminCapabilitySubject,
     WebAdminCapabilityView,
     render_capabilities_page,
@@ -91,21 +92,43 @@ class Authorizer:
 class StaticCapabilities:
     def __init__(self, result: tuple[WebAdminCapabilityView, ...]) -> None:
         self.result = result
+        self.role_validation_calls: list[int] = []
 
     async def load(self) -> tuple[WebAdminCapabilityView, ...]:
         return self.result
 
+    async def is_current_role_option(self, role_id: int) -> bool:
+        self.role_validation_calls.append(role_id)
+        return role_id in {70, 71}
+
 
 class MutationService:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, bool, int]] = []
+        self.calls: list[tuple[str, str, int | bool, int]] = []
         self.changed = True
 
     async def set_enabled(
         self, capability: str, enabled: bool, actor_user_id: int
     ) -> bool:
-        self.calls.append((capability, enabled, actor_user_id))
+        self.calls.append(("policy", capability, enabled, actor_user_id))
         return self.changed
+
+    async def grant_role(
+        self, capability: str, role_id: int, actor_user_id: int
+    ) -> bool:
+        self.calls.append(("grant", capability, role_id, actor_user_id))
+        return self.changed
+
+    async def revoke_role(
+        self, capability: str, role_id: int, actor_user_id: int
+    ) -> bool:
+        self.calls.append(("revoke", capability, role_id, actor_user_id))
+        return self.changed
+
+
+class RoleOptionsControl:
+    async def get_capability_role_options(self) -> tuple[tuple[int, str], ...]:
+        return ((70, "Moderators"), (71, "Voice team"))
 
 
 def grant(
@@ -140,6 +163,7 @@ def make_app(result: tuple[WebAdminCapabilityView, ...] | None = None):
         capabilities_read_service_factory=lambda session, settings, control: service,
         capabilities_mutation_service_factory=lambda session, settings: mutation,
     )
+    app.state.test_capabilities_service = service
     return app, authorizer, mutation
 
 
@@ -257,7 +281,7 @@ def test_authorized_web_admin_can_enable_capability(
 
     assert response.status_code == 303
     assert response.headers["location"].endswith("result=enabled")
-    assert mutation.calls == [("voice.move", True, user_id)]
+    assert mutation.calls == [("policy", "voice.move", True, user_id)]
 
 
 def test_capability_post_rejects_invalid_csrf_form_and_unknown_key() -> None:
@@ -312,7 +336,102 @@ def test_capability_post_noop_and_get_never_mutates() -> None:
 
     assert before.status_code == 200
     assert no_op.headers["location"].endswith("result=already_disabled")
-    assert mutation.calls == [("voice.move", False, 41)]
+    assert mutation.calls == [("policy", "voice.move", False, 41)]
+
+
+def test_capability_page_offers_role_names_and_excludes_granted_role() -> None:
+    view = capability()
+    view = WebAdminCapabilityView(
+        view.definition,
+        False,
+        view.role_grants,
+        view.user_grants,
+        role_options=(
+            # The current grant must never appear as a repeat add option.
+            WebAdminCapabilityRoleOption(71, "Voice team"),
+        ),
+        role_options_available=True,
+    )
+    app, _, _ = make_app((view,))
+    with authenticated(app, 41, WebAdminRole.OWNER) as client:
+        response = client.get("/admin/capabilities")
+    assert 'option value="71">Voice team' in response.text
+    assert 'option value="70">Moderators' not in response.text
+    assert "Remove Moderators" in response.text
+
+
+def test_role_grant_and_revoke_use_prg_and_validate_live_options() -> None:
+    app, _, mutation = make_app()
+    with authenticated(app, 41, WebAdminRole.OWNER) as client:
+        token = csrf_token(client)
+        granted = client.post(
+            "/admin/capabilities",
+            data={
+                "csrf_token": token,
+                "capability": "voice.move",
+                "role_id": "71",
+                "operation": "grant",
+            },
+            follow_redirects=False,
+        )
+        forged = client.post(
+            "/admin/capabilities",
+            data={
+                "csrf_token": csrf_token(client),
+                "capability": "voice.move",
+                "role_id": "72",
+                "operation": "grant",
+            },
+            follow_redirects=False,
+        )
+        revoked = client.post(
+            "/admin/capabilities",
+            data={
+                "csrf_token": csrf_token(client),
+                "capability": "voice.move",
+                "role_id": "999",
+                "operation": "revoke",
+            },
+            follow_redirects=False,
+        )
+    assert granted.headers["location"].endswith("result=granted")
+    assert forged.headers["location"].endswith("result=invalid_role")
+    assert revoked.headers["location"].endswith("result=revoked")
+    assert mutation.calls == [
+        ("grant", "voice.move", 71, 41),
+        ("revoke", "voice.move", 999, 41),
+    ]
+
+
+def test_role_grant_rejections_do_not_validate_or_mutate_before_required_checks() -> (
+    None
+):
+    app, _, mutation = make_app()
+    service = app.state.test_capabilities_service
+    with authenticated(app, 41, WebAdminRole.OWNER) as client:
+        csrf = client.post(
+            "/admin/capabilities",
+            data={
+                "csrf_token": "wrong",
+                "capability": "voice.move",
+                "role_id": "71",
+                "operation": "grant",
+            },
+        )
+        unknown = client.post(
+            "/admin/capabilities",
+            data={
+                "csrf_token": csrf_token(client),
+                "capability": "unknown",
+                "role_id": "71",
+                "operation": "grant",
+            },
+            follow_redirects=False,
+        )
+    assert csrf.status_code == 400
+    assert unknown.headers["location"].endswith("result=invalid")
+    assert service.role_validation_calls == []
+    assert mutation.calls == []
 
 
 class SubjectControl:
@@ -322,6 +441,9 @@ class SubjectControl:
         assert role_ids == (70,)
         assert user_ids == (80,)
         return CapabilityPresentationSubjects(((70, "Moderators"),), ((80, "Member"),))
+
+    async def get_capability_role_options(self) -> tuple[tuple[int, str], ...]:
+        return ((70, "Moderators"), (71, "Voice team"))
 
 
 class Repository:
@@ -377,6 +499,8 @@ async def test_read_service_uses_registry_default_and_ignores_unknown_rows(
     assert loaded[0].enabled is False
     assert loaded[0].role_grants[0].subject.label == "Moderators"
     assert loaded[0].user_grants[0].subject.label == "Member"
+    assert loaded[0].role_options == (WebAdminCapabilityRoleOption(71, "Voice team"),)
+    assert loaded[0].role_options_available is True
     assert Repository.calls == [VOICE_MOVE, VOICE_MOVE]
 
 
@@ -410,6 +534,9 @@ class UnavailableSubjectControl:
     async def get_capability_presentation_subjects(
         self, role_ids: tuple[int, ...], user_ids: tuple[int, ...]
     ) -> CapabilityPresentationSubjects:
+        raise RuntimeError("control unavailable")
+
+    async def get_capability_role_options(self) -> tuple[tuple[int, str], ...]:
         raise RuntimeError("control unavailable")
 
 
@@ -461,6 +588,7 @@ async def test_subject_lookup_outage_keeps_db_state_without_marking_entities_mis
     view = loaded[0]
     assert view.enabled is True
     assert view.subject_resolution_available is False
+    assert view.role_options_available is False
     assert [
         (item.subject.label, item.subject.missing) for item in view.role_grants
     ] == [("Role name unavailable", False)]
@@ -470,3 +598,13 @@ async def test_subject_lookup_outage_keeps_db_state_without_marking_entities_mis
     page = render_capabilities_page(loaded, csrf_token="csrf", role=WebAdminRole.OWNER)
     assert "Discord role/member names temporarily unavailable." in page
     assert ">Enabled</span>" in page
+
+
+def test_role_mutation_denial_response_has_no_store_headers() -> None:
+    app, _, mutation = make_app()
+    with authenticated(app, 41, WebAdminRole.OWNER) as client:
+        response = client.post("/admin/capabilities", data={})
+    assert response.status_code == 400
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert mutation.calls == []

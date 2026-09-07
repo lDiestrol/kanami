@@ -8,6 +8,7 @@ from discord_stats_bot.features.capabilities import (
 
 MAX_CAPABILITY_SUBJECTS = 250
 MAX_CAPABILITY_SUBJECT_NAME_LENGTH = 100
+MAX_CAPABILITY_ROLE_OPTIONS = 250
 
 
 class CapabilityPresentationRuntimeUnavailableError(RuntimeError):
@@ -40,6 +41,21 @@ class DiscordCapabilityPresentationService:
             and member.guild.id == guild.id
         )
         return CapabilityPresentationSubjects(roles, members)
+
+    async def get_role_options(self) -> tuple[tuple[int, str], ...]:
+        """Return current configured-guild roles suitable for capability grants."""
+        guild = self._configured_guild()
+        return tuple(
+            (role.id, role.name[:MAX_CAPABILITY_SUBJECT_NAME_LENGTH])
+            for role in sorted(
+                (
+                    role
+                    for role in guild.roles
+                    if role.guild.id == guild.id and not role.is_default()
+                ),
+                key=lambda role: (-role.position, role.name.casefold(), role.id),
+            )[:MAX_CAPABILITY_ROLE_OPTIONS]
+        )
 
     def _configured_guild(self) -> discord.Guild:
         if not self._client.is_ready():

@@ -1330,3 +1330,4 @@ automation, settings/env, migrations и intents для `/health` не добав
    конкретный private `WEB_ADMIN_HOST` + opt-in, разрешить TCP/8000 только с IP
    proxy VM, сохранить 8765/5432 loopback-only, затем выполнить OAuth и все четыре
    bot-profile smoke tests. Только после проверки переключить DNS и убрать Caddy.
+- Web Admin can manage `voice.move` ROLE grants through configured-guild Bot Control options; stale persisted grants remain revocable and disabled policies retain grants.

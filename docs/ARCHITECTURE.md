@@ -1386,3 +1386,4 @@ backup-политика остаются открытыми эксплуатац
 - дополнительные bot permissions и OAuth scopes, если появятся новые функции;
 - способ создания и удаления временного PostgreSQL для DB integration tests;
 - backup-политику и полноценный production health monitoring на этапе deployment.
+- Web capability role grants use configured-guild Bot Control cache validation; stale persisted roles remain revocable and disabled policy keeps grants.

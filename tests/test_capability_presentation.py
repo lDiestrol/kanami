@@ -13,13 +13,32 @@ class Guild:
     me = object()
 
     def __init__(self) -> None:
-        self.roles = {20: SimpleNamespace(id=20, name="Moderators", guild=self)}
+        self.role_map = {
+            10: SimpleNamespace(
+                id=10, name="@everyone", guild=self, position=0, is_default=lambda: True
+            ),
+            20: SimpleNamespace(
+                id=20,
+                name="Moderators",
+                guild=self,
+                position=2,
+                is_default=lambda: False,
+            ),
+            21: SimpleNamespace(
+                id=21,
+                name="Voice team",
+                guild=self,
+                position=1,
+                is_default=lambda: False,
+            ),
+        }
+        self.roles = list(self.role_map.values())
         self.members = {
             30: SimpleNamespace(id=30, display_name="Display member", guild=self)
         }
 
     def get_role(self, role_id: int):
-        return self.roles.get(role_id)
+        return self.role_map.get(role_id)
 
     def get_member(self, user_id: int):
         return self.members.get(user_id)
@@ -57,6 +76,37 @@ async def test_missing_cached_capability_subjects_are_not_materialized() -> None
 
     assert subjects.roles == ()
     assert subjects.members == ()
+
+
+@pytest.mark.asyncio
+async def test_role_options_are_configured_guild_only_default_free_and_deterministic() -> (
+    None
+):
+    options = await DiscordCapabilityPresentationService(
+        Client(guild=Guild()),
+        guild_id=10,  # type: ignore[arg-type]
+    ).get_role_options()
+    assert options == ((20, "Moderators"), (21, "Voice team"))
+
+
+@pytest.mark.asyncio
+async def test_role_options_respect_maximum() -> None:
+    guild = Guild()
+    guild.roles = [
+        SimpleNamespace(
+            id=value,
+            name=f"Role {value}",
+            guild=guild,
+            position=value,
+            is_default=lambda: False,
+        )
+        for value in range(1, 400)
+    ]
+    options = await DiscordCapabilityPresentationService(
+        Client(guild=guild),
+        guild_id=10,  # type: ignore[arg-type]
+    ).get_role_options()
+    assert len(options) == 250
 
 
 @pytest.mark.asyncio

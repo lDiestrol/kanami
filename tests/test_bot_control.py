@@ -697,6 +697,43 @@ async def test_web_control_client_reads_options_without_actor_header() -> None:
 
 
 @pytest.mark.asyncio
+async def test_capability_role_options_client_validates_response_contract() -> None:
+    session = FakeControlHttpSession(
+        FakeControlResponse(
+            200, b'{"roles":[{"id":20,"name":"Moderators"}],"members":[]}'
+        )
+    )
+    client = AiohttpBotProfileControlClient(
+        session,
+        base_url="http://127.0.0.1:8765",
+        shared_secret=SecretStr(SHARED_SECRET),
+    )  # type: ignore[arg-type]
+    assert await client.get_capability_role_options() == ((20, "Moderators"),)
+    session.response = FakeControlResponse(
+        200, b'{"roles":[{"id":20,"name":""}],"members":[]}'
+    )
+    with pytest.raises(CapabilityPresentationControlError):
+        await client.get_capability_role_options()
+    session.response = FakeControlResponse(
+        200,
+        b'{"roles":[{"id":20,"name":"Moderators"},{"id":20,"name":"Duplicate"}],"members":[]}',
+    )
+    with pytest.raises(CapabilityPresentationControlError):
+        await client.get_capability_role_options()
+    session.response = FakeControlResponse(503, b'{"error":"unavailable"}')
+    with pytest.raises(CapabilityPresentationControlError):
+        await client.get_capability_role_options()
+    too_many = (
+        b'{"roles":['
+        + b",".join(b'{"id":1,"name":"Role"}' for _ in range(251))
+        + b'],"members":[]}'
+    )
+    session.response = FakeControlResponse(200, too_many)
+    with pytest.raises(CapabilityPresentationControlError):
+        await client.get_capability_role_options()
+
+
+@pytest.mark.asyncio
 async def test_capability_subject_client_batches_deduplicates_and_aggregates() -> None:
     http_session = CapabilitySubjectsHttpSession()
     client = AiohttpBotProfileControlClient(
@@ -970,6 +1007,59 @@ class FakeCapabilitySubjectsOperator:
             tuple((role_id, f"Role {role_id}") for role_id in role_ids),
             tuple((user_id, f"Member {user_id}") for user_id in user_ids),
         )
+
+    async def get_role_options(self) -> tuple[tuple[int, str], ...]:
+        if self.error is not None:
+            raise self.error
+        return ((20, "Moderators"), (21, "Voice team"))
+
+
+def test_capability_roles_endpoint_is_authenticated_and_returns_options() -> None:
+    roles = FakeCapabilitySubjectsOperator()
+    app = create_bot_control_app(
+        FakeOperator(),
+        shared_secret=SecretStr(SHARED_SECRET),
+        capability_presentation_subjects_operator=roles,
+    )
+    with TestClient(app) as client:
+        missing = client.get("/control/v1/capabilities/roles")
+        wrong = client.get(
+            "/control/v1/capabilities/roles", headers={"Authorization": "Bearer wrong"}
+        )
+        response = client.get(
+            "/control/v1/capabilities/roles",
+            headers={"Authorization": f"Bearer {SHARED_SECRET}"},
+        )
+    assert missing.status_code == wrong.status_code == 401
+    assert response.json() == {
+        "roles": [{"id": 20, "name": "Moderators"}, {"id": 21, "name": "Voice team"}],
+        "members": [],
+    }
+
+
+def test_capability_roles_endpoint_maps_unavailable_runtime_and_missing_operator() -> (
+    None
+):
+    unavailable = create_bot_control_app(
+        FakeOperator(), shared_secret=SecretStr(SHARED_SECRET)
+    )
+    runtime = create_bot_control_app(
+        FakeOperator(),
+        shared_secret=SecretStr(SHARED_SECRET),
+        capability_presentation_subjects_operator=FakeCapabilitySubjectsOperator(
+            CapabilityPresentationRuntimeUnavailableError()
+        ),
+    )
+    headers = {"Authorization": f"Bearer {SHARED_SECRET}"}
+    with TestClient(unavailable) as client:
+        assert (
+            client.get("/control/v1/capabilities/roles", headers=headers).status_code
+            == 503
+        )
+    with TestClient(runtime) as client:
+        assert client.get("/control/v1/capabilities/roles", headers=headers).json() == {
+            "error": "runtime_unavailable"
+        }
 
 
 def test_capability_subjects_endpoint_is_authenticated_bounded_and_typed() -> None:

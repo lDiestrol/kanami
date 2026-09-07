@@ -90,6 +90,8 @@ class CapabilityPresentationControl(Protocol):
         self, role_ids: tuple[int, ...], user_ids: tuple[int, ...]
     ) -> CapabilityPresentationSubjects: ...
 
+    async def get_capability_role_options(self) -> tuple[tuple[int, str], ...]: ...
+
 
 class RulesPublicationControl(Protocol):
     async def sync_rules_publication(
@@ -206,6 +208,9 @@ class DisabledBotProfileControl:
         self, role_ids: tuple[int, ...], user_ids: tuple[int, ...]
     ) -> CapabilityPresentationSubjects:
         del role_ids, user_ids
+        raise CapabilityPresentationControlError("control_unavailable")
+
+    async def get_capability_role_options(self) -> tuple[tuple[int, str], ...]:
         raise CapabilityPresentationControlError("control_unavailable")
 
     async def change_server_setting(
@@ -499,6 +504,30 @@ class AiohttpBotProfileControlClient:
         except aiohttp.ClientError as error:
             raise CapabilityPresentationControlError("control_unavailable") from error
 
+    async def get_capability_role_options(self) -> tuple[tuple[int, str], ...]:
+        headers = {"Authorization": f"Bearer {self._shared_secret.get_secret_value()}"}
+        try:
+            async with self._http_session.request(
+                "GET",
+                f"{self._base_url}/control/v1/capabilities/roles",
+                headers=headers,
+                allow_redirects=False,
+            ) as response:
+                body = await response.content.read(OPTIONS_RESPONSE_MAX_BYTES + 1)
+                if len(body) > OPTIONS_RESPONSE_MAX_BYTES or response.status != 200:
+                    raise CapabilityPresentationControlError("control_unavailable")
+                try:
+                    payload = _CapabilitySubjectsPayload.model_validate_json(body)
+                    return self._validated_role_options(payload.roles)
+                except (ValidationError, ValueError) as error:
+                    raise CapabilityPresentationControlError(
+                        "malformed_response"
+                    ) from error
+        except asyncio.TimeoutError as error:
+            raise CapabilityPresentationControlError("timeout") from error
+        except aiohttp.ClientError as error:
+            raise CapabilityPresentationControlError("control_unavailable") from error
+
     @staticmethod
     def _deduplicate_capability_subject_ids(values: tuple[int, ...]) -> tuple[int, ...]:
         result = []
@@ -544,6 +573,26 @@ class AiohttpBotProfileControlClient:
                 or not 0 < len(item.name) <= 100
             ):
                 raise ValueError("invalid capability presentation response")
+            seen.add(item.id)
+            result.append((item.id, item.name))
+        return tuple(result)
+
+    @staticmethod
+    def _validated_role_options(
+        items: list[_RoleOptionPayload],
+    ) -> tuple[tuple[int, str], ...]:
+        if len(items) > MAX_CAPABILITY_SUBJECTS_PER_REQUEST:
+            raise ValueError("too many capability role options")
+        result = []
+        seen = set()
+        for item in items:
+            if (
+                not 0 < item.id <= MAX_DISCORD_SNOWFLAKE
+                or not item.name.strip()
+                or len(item.name) > 100
+                or item.id in seen
+            ):
+                raise ValueError("invalid capability role option response")
             seen.add(item.id)
             result.append((item.id, item.name))
         return tuple(result)
