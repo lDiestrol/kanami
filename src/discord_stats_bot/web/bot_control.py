@@ -92,6 +92,8 @@ class CapabilityPresentationControl(Protocol):
 
     async def get_capability_role_options(self) -> tuple[tuple[int, str], ...]: ...
 
+    async def get_capability_member_options(self) -> tuple[tuple[int, str], ...]: ...
+
 
 class RulesPublicationControl(Protocol):
     async def sync_rules_publication(
@@ -211,6 +213,9 @@ class DisabledBotProfileControl:
         raise CapabilityPresentationControlError("control_unavailable")
 
     async def get_capability_role_options(self) -> tuple[tuple[int, str], ...]:
+        raise CapabilityPresentationControlError("control_unavailable")
+
+    async def get_capability_member_options(self) -> tuple[tuple[int, str], ...]:
         raise CapabilityPresentationControlError("control_unavailable")
 
     async def change_server_setting(
@@ -523,6 +528,27 @@ class AiohttpBotProfileControlClient:
                     raise CapabilityPresentationControlError(
                         "malformed_response"
                     ) from error
+        except asyncio.TimeoutError as error:
+            raise CapabilityPresentationControlError("timeout") from error
+        except aiohttp.ClientError as error:
+            raise CapabilityPresentationControlError("control_unavailable") from error
+
+    async def get_capability_member_options(self) -> tuple[tuple[int, str], ...]:
+        headers = {"Authorization": f"Bearer {self._shared_secret.get_secret_value()}"}
+        try:
+            async with self._http_session.request(
+                "GET",
+                f"{self._base_url}/control/v1/capabilities/members",
+                headers=headers,
+                allow_redirects=False,
+            ) as response:
+                body = await response.content.read(OPTIONS_RESPONSE_MAX_BYTES + 1)
+                if len(body) > OPTIONS_RESPONSE_MAX_BYTES or response.status != 200:
+                    raise CapabilityPresentationControlError("control_unavailable")
+                payload = _CapabilitySubjectsPayload.model_validate_json(body)
+                return self._validated_role_options(payload.members)
+        except (ValidationError, ValueError) as error:
+            raise CapabilityPresentationControlError("malformed_response") from error
         except asyncio.TimeoutError as error:
             raise CapabilityPresentationControlError("timeout") from error
         except aiohttp.ClientError as error:

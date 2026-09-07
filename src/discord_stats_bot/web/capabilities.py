@@ -57,6 +57,12 @@ class WebAdminCapabilityRoleOption:
 
 
 @dataclass(frozen=True, slots=True)
+class WebAdminCapabilityMemberOption:
+    user_id: int
+    label: str
+
+
+@dataclass(frozen=True, slots=True)
 class WebAdminCapabilityView:
     definition: CapabilityDefinition
     enabled: bool
@@ -65,6 +71,8 @@ class WebAdminCapabilityView:
     subject_resolution_available: bool = True
     role_options: tuple[WebAdminCapabilityRoleOption, ...] = ()
     role_options_available: bool = False
+    member_options: tuple[WebAdminCapabilityMemberOption, ...] = ()
+    member_options_available: bool = False
 
 
 class WebAdminCapabilitiesReadService:
@@ -142,6 +150,16 @@ class WebAdminCapabilitiesReadService:
             )
             role_options = ()
             role_options_available = False
+        try:
+            member_options = await self._subject_control.get_capability_member_options()
+            member_options_available = True
+        except Exception as error:
+            logger.warning(
+                "web_admin_capability_member_options_unavailable error_type=%s",
+                type(error).__name__,
+            )
+            member_options = ()
+            member_options_available = False
         return tuple(
             WebAdminCapabilityView(
                 definition=definition,
@@ -194,6 +212,17 @@ class WebAdminCapabilitiesReadService:
                     }
                 ),
                 role_options_available=role_options_available,
+                member_options=tuple(
+                    WebAdminCapabilityMemberOption(user_id, label)
+                    for user_id, label in member_options
+                    if user_id
+                    not in {
+                        grant.subject_id
+                        for grant in grants
+                        if grant.subject_type is CapabilitySubjectType.USER
+                    }
+                ),
+                member_options_available=member_options_available,
             )
             for definition, policy, grants in records_tuple
         )
@@ -203,6 +232,12 @@ class WebAdminCapabilitiesReadService:
         return role_id in {
             option_id
             for option_id, _ in await self._subject_control.get_capability_role_options()
+        }
+
+    async def is_current_user_option(self, user_id: int) -> bool:
+        return user_id in {
+            value
+            for value, _ in await self._subject_control.get_capability_member_options()
         }
 
 
@@ -262,6 +297,39 @@ class WebAdminCapabilityPolicyMutationService:
                 capability=capability,
                 subject_type=CapabilitySubjectType.ROLE,
                 subject_id=role_id,
+                actor_user_id=actor_user_id,
+                occurred_at=datetime.now(UTC),
+            )
+        return result.changed
+
+    async def grant_user(
+        self, capability: str, user_id: int, actor_user_id: int
+    ) -> bool:
+        async with self._session_factory.begin() as session:
+            result = await CapabilityMutationService(
+                SqlAlchemyCapabilityRepository(session),
+                SqlAlchemyAuditEventRepository(session),
+            ).grant_user(
+                guild_id=self._guild_id,
+                capability=capability,
+                subject_id=user_id,
+                actor_user_id=actor_user_id,
+                occurred_at=datetime.now(UTC),
+            )
+        return result.changed
+
+    async def revoke_user(
+        self, capability: str, user_id: int, actor_user_id: int
+    ) -> bool:
+        async with self._session_factory.begin() as session:
+            result = await CapabilityMutationService(
+                SqlAlchemyCapabilityRepository(session),
+                SqlAlchemyAuditEventRepository(session),
+            ).revoke(
+                guild_id=self._guild_id,
+                capability=capability,
+                subject_type=CapabilitySubjectType.USER,
+                subject_id=user_id,
                 actor_user_id=actor_user_id,
                 occurred_at=datetime.now(UTC),
             )
@@ -330,6 +398,38 @@ def _role_grant_actions(item: WebAdminCapabilityView, csrf_token: str) -> str:
     return add + remove
 
 
+def _user_grant_actions(item: WebAdminCapabilityView, csrf_token: str) -> str:
+    if not item.member_options_available:
+        add = '<p class="empty">Discord member options are temporarily unavailable.</p>'
+    elif not item.member_options:
+        add = '<p class="empty">No additional users are available.</p>'
+    else:
+        options = "".join(
+            f'<option value="{option.user_id}">{escape(option.label)}</option>'
+            for option in item.member_options
+        )
+        add = (
+            '<form method="post" action="/admin/capabilities"><label>Add user '
+            '<select name="user_id">'
+            + options
+            + "</select></label>"
+            + f'<input type="hidden" name="csrf_token" value="{escape(csrf_token, quote=True)}">'
+            + f'<input type="hidden" name="capability" value="{escape(item.definition.key, quote=True)}">'
+            + '<input type="hidden" name="operation" value="grant_user">'
+            + '<button type="submit">Add user</button></form>'
+        )
+    remove = "".join(
+        '<form method="post" action="/admin/capabilities">'
+        + f'<input type="hidden" name="csrf_token" value="{escape(csrf_token, quote=True)}">'
+        + f'<input type="hidden" name="capability" value="{escape(item.definition.key, quote=True)}">'
+        + f'<input type="hidden" name="user_id" value="{grant.subject.subject_id}">'
+        + '<input type="hidden" name="operation" value="revoke_user">'
+        + f'<button class="danger" type="submit">Remove {escape(grant.subject.label)}</button></form>'
+        for grant in item.user_grants
+    )
+    return add + remove
+
+
 def _policy_action(item: WebAdminCapabilityView, csrf_token: str) -> str:
     enabled = not item.enabled
     label = "Enable" if enabled else "Disable"
@@ -365,9 +465,17 @@ def render_capabilities_page(
             "revoked": "Role revoked.",
             "not_granted": "Role grant is already removed.",
             "invalid_role": "Invalid role.",
+            "user_granted": "User granted.",
+            "user_already_granted": "User is already granted.",
+            "user_revoked": "User revoked.",
+            "user_not_granted": "User grant is already removed.",
+            "invalid_member": "Invalid member.",
+            "member_options_unavailable": (
+                "Discord member options are temporarily unavailable."
+            ),
         }
         notice = (
-            f'<p class="notice {"failure" if result in {"invalid", "invalid_role", "unavailable"} else "success"}">'
+            f'<p class="notice {"failure" if result in {"invalid", "invalid_role", "invalid_member", "member_options_unavailable", "unavailable"} else "success"}">'
             f"{escape(messages[result])}</p>"
             if result in messages
             else ""
@@ -396,6 +504,7 @@ def render_capabilities_page(
                 f"{_role_grant_actions(item, csrf_token)}"
                 "</section><section><h3>Allowed users</h3>"
                 f"{_grant_list(item.user_grants, empty='Нет разрешённых пользователей.')}"
+                f"{_user_grant_actions(item, csrf_token)}"
                 "</section></div>"
                 f'<div class="actions">{_policy_action(item, csrf_token)}</div>'
                 f'<code class="capability-key">{escape(item.definition.key)}</code>'
@@ -478,6 +587,7 @@ async def admin_capabilities_update(request: Request) -> Response:
         not in (
             {"csrf_token", "capability", "enabled"},
             {"csrf_token", "capability", "role_id", "operation"},
+            {"csrf_token", "capability", "user_id", "operation"},
         )
         or not constant_time_token_equal(values["csrf_token"], session.csrf_token)
         or ("enabled" in values and values["enabled"] not in {"true", "false"})
@@ -505,6 +615,60 @@ async def admin_capabilities_update(request: Request) -> Response:
             headers=RESPONSE_HEADERS,
         )
     if "operation" in values:
+        if "user_id" in values:
+            raw = values["user_id"]
+            if (
+                not raw.isascii()
+                or not raw.isdecimal()
+                or not 0 < int(raw) <= MAX_DISCORD_SNOWFLAKE
+                or values["operation"] not in {"grant_user", "revoke_user"}
+            ):
+                return _redirect(result="invalid_member")
+            user_id = int(raw)
+            if values["operation"] == "grant_user":
+                try:
+                    if not await request.state.capabilities_read_service.is_current_user_option(
+                        user_id
+                    ):
+                        return _redirect(result="invalid_member")
+                except Exception as error:
+                    logger.warning(
+                        "web_admin_capability_member_options_unavailable "
+                        "actor=%s error_type=%s",
+                        session.discord_user_id,
+                        type(error).__name__,
+                    )
+                    return _redirect(result="member_options_unavailable")
+                try:
+                    changed = (
+                        await request.state.capabilities_mutation_service.grant_user(
+                            definition.key, user_id, session.discord_user_id
+                        )
+                    )
+                except Exception as error:
+                    logger.warning(
+                        "web_admin_capability_user_mutation_failed actor=%s "
+                        "operation=grant_user error_type=%s",
+                        session.discord_user_id,
+                        type(error).__name__,
+                    )
+                    return _redirect(result="unavailable")
+                return _redirect(
+                    result="user_granted" if changed else "user_already_granted"
+                )
+            try:
+                changed = await request.state.capabilities_mutation_service.revoke_user(
+                    definition.key, user_id, session.discord_user_id
+                )
+            except Exception as error:
+                logger.warning(
+                    "web_admin_capability_user_mutation_failed actor=%s "
+                    "operation=revoke_user error_type=%s",
+                    session.discord_user_id,
+                    type(error).__name__,
+                )
+                return _redirect(result="unavailable")
+            return _redirect(result="user_revoked" if changed else "user_not_granted")
         raw_role_id = values["role_id"]
         if (
             not raw_role_id.isascii()

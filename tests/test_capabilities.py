@@ -284,6 +284,40 @@ async def test_grant_and_revoke_are_idempotent_and_audited() -> None:
 
 
 @pytest.mark.asyncio
+async def test_user_grant_and_revoke_audits_keep_subject_and_actor_identity() -> None:
+    _, audit, _, mutation = services()
+
+    granted = await mutation.grant_user(
+        guild_id=1,
+        capability=VOICE_MOVE,
+        subject_id=42,
+        actor_user_id=99,
+        occurred_at=T0,
+    )
+    revoked = await mutation.revoke(
+        guild_id=1,
+        capability=VOICE_MOVE,
+        subject_type=CapabilitySubjectType.USER,
+        subject_id=42,
+        actor_user_id=99,
+        occurred_at=T0,
+    )
+
+    assert (granted.changed, revoked.changed) == (True, True)
+    assert [draft.event_type for draft in audit.drafts] == [
+        "web_admin.capability_granted",
+        "web_admin.capability_revoked",
+    ]
+    for draft in audit.drafts:
+        assert (draft.subject_type, draft.subject_id, draft.actor_user_id) == (
+            "discord_user",
+            42,
+            99,
+        )
+        assert draft.details_data["subject_type"] == "user"
+
+
+@pytest.mark.asyncio
 async def test_mutations_reject_unknown_capability() -> None:
     *_, mutation = services()
     with pytest.raises(UnknownCapabilityError):
@@ -307,6 +341,22 @@ async def test_audit_failure_propagates_to_caller_transaction() -> None:
             guild_id=1,
             capability=VOICE_MOVE,
             enabled=True,
+            actor_user_id=2,
+            occurred_at=T0,
+        )
+
+
+@pytest.mark.asyncio
+async def test_user_audit_failure_propagates_to_caller_transaction() -> None:
+    mutation = CapabilityMutationService(
+        MemoryRepository(), MemoryAuditRepository(fail=True)
+    )
+
+    with pytest.raises(RuntimeError, match="audit failed"):
+        await mutation.grant_user(
+            guild_id=1,
+            capability=VOICE_MOVE,
+            subject_id=42,
             actor_user_id=2,
             occurred_at=T0,
         )

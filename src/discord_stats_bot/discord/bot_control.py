@@ -116,6 +116,8 @@ class CapabilityPresentationSubjectsOperator(Protocol):
 
     async def get_role_options(self) -> tuple[tuple[int, str], ...]: ...
 
+    async def get_member_options(self) -> tuple[tuple[int, str], ...]: ...
+
 
 class DiscordBotProfileService:
     """Edit only the configured guild's own bot member through discord.py."""
@@ -578,6 +580,30 @@ def create_bot_control_app(
             }
         )
 
+    async def get_capability_member_options(request: Request) -> Response:
+        if not _authorized(request, shared_secret):
+            return JSONResponse({"error": "control_unauthorized"}, status_code=401)
+        if capability_presentation_subjects_operator is None:
+            return JSONResponse(
+                {"error": "capability_presentation_unavailable"}, status_code=503
+            )
+        try:
+            members = (
+                await capability_presentation_subjects_operator.get_member_options()
+            )
+        except CapabilityPresentationRuntimeUnavailableError:
+            return JSONResponse({"error": "runtime_unavailable"}, status_code=503)
+        except Exception:
+            return JSONResponse(
+                {"error": "capability_presentation_failure"}, status_code=503
+            )
+        return JSONResponse(
+            {
+                "roles": [],
+                "members": [{"id": user_id, "name": name} for user_id, name in members],
+            }
+        )
+
     async def get_profile(request: Request) -> Response:
         return await execute(
             request,
@@ -825,6 +851,11 @@ def create_bot_control_app(
             Route(
                 "/control/v1/capabilities/roles",
                 get_capability_role_options,
+                methods=["GET"],
+            ),
+            Route(
+                "/control/v1/capabilities/members",
+                get_capability_member_options,
                 methods=["GET"],
             ),
             Route(

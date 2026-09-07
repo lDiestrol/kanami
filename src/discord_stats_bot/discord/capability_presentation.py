@@ -57,6 +57,20 @@ class DiscordCapabilityPresentationService:
             )[:MAX_CAPABILITY_ROLE_OPTIONS]
         )
 
+    async def get_member_options(self) -> tuple[tuple[int, str], ...]:
+        guild = self._configured_guild()
+        return tuple(
+            (member.id, member.display_name[:MAX_CAPABILITY_SUBJECT_NAME_LENGTH])
+            for member in sorted(
+                (
+                    member
+                    for member in guild.members
+                    if member.guild.id == guild.id and not member.bot
+                ),
+                key=lambda member: (member.display_name.casefold(), member.id),
+            )[:MAX_CAPABILITY_SUBJECTS]
+        )
+
     def _configured_guild(self) -> discord.Guild:
         if not self._client.is_ready():
             raise CapabilityPresentationRuntimeUnavailableError()

@@ -5,9 +5,11 @@
 В ветке `feature/voice-move-access` реализован локальный A1 foundation
 управляемых capabilities: generic PostgreSQL policies/grants, Discord-независимая
 authorization и audit mutations. Зарегистрирован только `voice.move`, default
-disabled. A2.2 добавляет на этой странице direct Web Admin enable/disable policy
-mutation через существующий A1 service и atomic audit transaction; grants и
-`/move` runtime всё ещё не реализованы, новых `.env`-настроек нет. Production
+disabled. Web Admin управляет enable/disable policy и ROLE/USER grants через
+существующий A1 service и atomic audit transaction; новые grants валидируются по
+configured-guild Discord cache, USER selector исключает bot accounts, а stale
+persisted ROLE/USER grants остаются revocable без Discord runtime. Disabled policy
+сохраняет grants. `/move` runtime всё ещё не реализован, новых `.env`-настроек нет. Production
 по-прежнему находится на прежнем состоянии и новую migration ещё не получал.
 
 Созданы Python-каркас, PostgreSQL persistence foundation, async Alembic
@@ -81,6 +83,11 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
   advisory transaction lock pattern и идемпотентны.
 - Capability policy/grant/revoke записывают important history-only audit events
   существующей подсистемой; no-op mutation audit не создаёт.
+- Web Admin `/admin/capabilities` управляет ROLE и USER grants: selector новых
+  grants использует configured-guild cache через Bot Control, USER selector не
+  включает bot accounts. Недоступность Discord runtime блокирует только validation
+  нового grant; persisted stale ROLE/USER grant можно отозвать, а disabled policy
+  не удаляет grants.
 - A2.1 добавляет `/admin/capabilities` для OWNER и managed ADMIN: registry
   остаётся allowlist отображаемых capabilities, отсутствующая policy row даёт
   default state, а role/member labels читаются только из configured guild cache

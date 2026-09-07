@@ -734,6 +734,55 @@ async def test_capability_role_options_client_validates_response_contract() -> N
 
 
 @pytest.mark.asyncio
+async def test_capability_member_options_client_validates_response_contract() -> None:
+    session = FakeControlHttpSession(
+        FakeControlResponse(200, b'{"roles":[],"members":[{"id":30,"name":"Alice"}]}')
+    )
+    client = AiohttpBotProfileControlClient(
+        session,
+        base_url="http://127.0.0.1:8765",
+        shared_secret=SecretStr(SHARED_SECRET),
+    )  # type: ignore[arg-type]
+
+    assert await client.get_capability_member_options() == ((30, "Alice"),)
+    method, url, kwargs = session.calls[-1]
+    assert method == "GET"
+    assert url == "http://127.0.0.1:8765/control/v1/capabilities/members"
+    assert kwargs == {
+        "headers": {"Authorization": f"Bearer {SHARED_SECRET}"},
+        "allow_redirects": False,
+    }
+
+    invalid_payloads = (
+        b"not json",
+        b'{"roles":[]}',
+        b'{"roles":[],"members":[{"id":30,"name":"Alice"},{"id":30,"name":"Again"}]}',
+        b'{"roles":[],"members":[{"id":0,"name":"Alice"}]}',
+        (
+            b'{"roles":[],"members":[{"id":'
+            + str(MAX_DISCORD_SNOWFLAKE + 1).encode()
+            + b',"name":"Alice"}]}'
+        ),
+        b'{"roles":[],"members":[{"id":30,"name":""}]}',
+        b'{"roles":[],"members":[{"id":30,"name":"' + b"A" * 101 + b'"}]}',
+        json.dumps(
+            {
+                "roles": [],
+                "members": [{"id": value, "name": "Member"} for value in range(1, 252)],
+            }
+        ).encode(),
+    )
+    for payload in invalid_payloads:
+        session.response = FakeControlResponse(200, payload)
+        with pytest.raises(CapabilityPresentationControlError):
+            await client.get_capability_member_options()
+
+    session.response = FakeControlResponse(503, b'{"error":"unavailable"}')
+    with pytest.raises(CapabilityPresentationControlError):
+        await client.get_capability_member_options()
+
+
+@pytest.mark.asyncio
 async def test_capability_subject_client_batches_deduplicates_and_aggregates() -> None:
     http_session = CapabilitySubjectsHttpSession()
     client = AiohttpBotProfileControlClient(
@@ -1013,6 +1062,11 @@ class FakeCapabilitySubjectsOperator:
             raise self.error
         return ((20, "Moderators"), (21, "Voice team"))
 
+    async def get_member_options(self) -> tuple[tuple[int, str], ...]:
+        if self.error is not None:
+            raise self.error
+        return ((30, "Alice"), (31, "Bob"))
+
 
 def test_capability_roles_endpoint_is_authenticated_and_returns_options() -> None:
     roles = FakeCapabilitySubjectsOperator()
@@ -1060,6 +1114,57 @@ def test_capability_roles_endpoint_maps_unavailable_runtime_and_missing_operator
         assert client.get("/control/v1/capabilities/roles", headers=headers).json() == {
             "error": "runtime_unavailable"
         }
+
+
+def test_capability_members_endpoint_is_authenticated_and_returns_options() -> None:
+    members = FakeCapabilitySubjectsOperator()
+    app = create_bot_control_app(
+        FakeOperator(),
+        shared_secret=SecretStr(SHARED_SECRET),
+        capability_presentation_subjects_operator=members,
+    )
+    with TestClient(app) as client:
+        missing = client.get("/control/v1/capabilities/members")
+        wrong = client.get(
+            "/control/v1/capabilities/members",
+            headers={"Authorization": "Bearer wrong"},
+        )
+        response = client.get(
+            "/control/v1/capabilities/members",
+            headers={"Authorization": f"Bearer {SHARED_SECRET}"},
+        )
+
+    assert missing.status_code == wrong.status_code == 401
+    assert response.json() == {
+        "roles": [],
+        "members": [{"id": 30, "name": "Alice"}, {"id": 31, "name": "Bob"}],
+    }
+
+
+def test_capability_members_endpoint_maps_unavailable_runtime_and_missing_operator() -> (
+    None
+):
+    unavailable = create_bot_control_app(
+        FakeOperator(), shared_secret=SecretStr(SHARED_SECRET)
+    )
+    runtime = create_bot_control_app(
+        FakeOperator(),
+        shared_secret=SecretStr(SHARED_SECRET),
+        capability_presentation_subjects_operator=FakeCapabilitySubjectsOperator(
+            CapabilityPresentationRuntimeUnavailableError()
+        ),
+    )
+    headers = {"Authorization": f"Bearer {SHARED_SECRET}"}
+    with TestClient(unavailable) as client:
+        assert (
+            client.get("/control/v1/capabilities/members", headers=headers).status_code
+            == 503
+        )
+    with TestClient(runtime) as client:
+        response = client.get("/control/v1/capabilities/members", headers=headers)
+
+    assert response.status_code == 503
+    assert response.json() == {"error": "runtime_unavailable"}
 
 
 def test_capability_subjects_endpoint_is_authenticated_bounded_and_typed() -> None:

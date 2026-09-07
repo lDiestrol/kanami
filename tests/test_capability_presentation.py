@@ -33,15 +33,16 @@ class Guild:
             ),
         }
         self.roles = list(self.role_map.values())
-        self.members = {
+        self.member_map = {
             30: SimpleNamespace(id=30, display_name="Display member", guild=self)
         }
+        self.members = list(self.member_map.values())
 
     def get_role(self, role_id: int):
         return self.role_map.get(role_id)
 
     def get_member(self, user_id: int):
-        return self.members.get(user_id)
+        return self.member_map.get(user_id)
 
 
 class Client:
@@ -110,6 +111,50 @@ async def test_role_options_respect_maximum() -> None:
 
 
 @pytest.mark.asyncio
+async def test_member_options_are_human_only_deterministic_and_bounded() -> None:
+    guild = Guild()
+    guild.members = [
+        SimpleNamespace(id=32, display_name="alice", guild=guild, bot=False),
+        SimpleNamespace(id=31, display_name="Alice", guild=guild, bot=False),
+        SimpleNamespace(id=33, display_name="Build bot", guild=guild, bot=True),
+        *(
+            SimpleNamespace(
+                id=value,
+                display_name=f"Member {value}",
+                guild=guild,
+                bot=False,
+            )
+            for value in range(100, 400)
+        ),
+    ]
+
+    options = await DiscordCapabilityPresentationService(
+        Client(guild=guild),
+        guild_id=10,  # type: ignore[arg-type]
+    ).get_member_options()
+
+    assert len(options) == 250
+    assert options[:2] == ((31, "Alice"), (32, "alice"))
+    assert all(user_id != 33 for user_id, _ in options)
+    assert len({user_id for user_id, _ in options}) == len(options)
+
+
+@pytest.mark.asyncio
+async def test_member_options_bound_display_names() -> None:
+    guild = Guild()
+    guild.members = [
+        SimpleNamespace(id=30, display_name="A" * 101, guild=guild, bot=False)
+    ]
+
+    options = await DiscordCapabilityPresentationService(
+        Client(guild=guild),
+        guild_id=10,  # type: ignore[arg-type]
+    ).get_member_options()
+
+    assert options == ((30, "A" * 100),)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("ready,guild", [(False, Guild()), (True, None)])
 async def test_unavailable_capability_cache_has_capability_specific_error(
     ready: bool, guild: Guild | None
@@ -121,3 +166,5 @@ async def test_unavailable_capability_cache_has_capability_specific_error(
 
     with pytest.raises(CapabilityPresentationRuntimeUnavailableError):
         await service.get_subjects((), ())
+    with pytest.raises(CapabilityPresentationRuntimeUnavailableError):
+        await service.get_member_options()

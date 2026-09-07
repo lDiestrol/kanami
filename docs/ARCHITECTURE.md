@@ -1386,4 +1386,7 @@ backup-политика остаются открытыми эксплуатац
 - дополнительные bot permissions и OAuth scopes, если появятся новые функции;
 - способ создания и удаления временного PostgreSQL для DB integration tests;
 - backup-политику и полноценный production health monitoring на этапе deployment.
-- Web capability role grants use configured-guild Bot Control cache validation; stale persisted roles remain revocable and disabled policy keeps grants.
+- Web Admin manages both ROLE and USER capability grants through configured-guild
+  Bot Control cache validation. New ROLE/USER grants require a live cache target;
+  the USER selector excludes bot accounts. Stale persisted ROLE/USER grants remain
+  revocable without Discord runtime, and a disabled policy keeps both grant types.
