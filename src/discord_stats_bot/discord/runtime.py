@@ -47,6 +47,7 @@ from discord_stats_bot.discord.voice_channels import (
     VoiceChannelLeaderboardCommandHandler,
 )
 from discord_stats_bot.discord.voice_leaderboard import VoiceLeaderboardCommandHandler
+from discord_stats_bot.discord.voice_move import VoiceMoveCommandHandler
 from discord_stats_bot.discord.voice_server_stats import (
     VoiceServerStatisticsCommandHandler,
 )
@@ -758,6 +759,7 @@ class DiscordStatsClient(discord.Client):
             VoiceServerStatisticsCommandHandler | None
         ) = None,
         voice_activity_command_handler: VoiceActivityCommandHandler | None = None,
+        voice_move_command_handler: VoiceMoveCommandHandler | None = None,
         game_statistics_command_handler: GameStatisticsCommandHandler | None = None,
         achievements_command_handler: AchievementsCommandHandler | None = None,
         member_profile_command_handler: MemberProfileCommandHandler | None = None,
@@ -810,6 +812,7 @@ class DiscordStatsClient(discord.Client):
             voice_server_statistics_command_handler
         )
         self._voice_activity_command_handler = voice_activity_command_handler
+        self._voice_move_command_handler = voice_move_command_handler
         self._game_statistics_command_handler = game_statistics_command_handler
         self._achievements_command_handler = achievements_command_handler
         self._member_profile_command_handler = member_profile_command_handler
@@ -876,6 +879,15 @@ class DiscordStatsClient(discord.Client):
             ),
             guild=self._command_guild,
         )
+        if voice_move_command_handler is not None:
+            self.tree.add_command(
+                app_commands.Command(
+                    name="move",
+                    description="Переместить участника в голосовой канал",
+                    callback=self._handle_move_command,
+                ),
+                guild=self._command_guild,
+            )
         if voice_channel_leaderboard_command_handler is not None:
             self.tree.add_command(
                 app_commands.Command(
@@ -1053,6 +1065,22 @@ class DiscordStatsClient(discord.Client):
             ephemeral=True,
             allowed_mentions=discord.AllowedMentions.none(),
         )
+
+    @app_commands.guild_only()
+    @app_commands.describe(
+        member="Участник для перемещения",
+        destination="Целевой голосовой канал",
+    )
+    async def _handle_move_command(
+        self,
+        interaction: discord.Interaction,
+        member: discord.Member,
+        destination: discord.VoiceChannel,
+    ) -> None:
+        if self._voice_move_command_handler is not None:
+            await self._voice_move_command_handler.handle(
+                interaction, member, destination
+            )
 
     @app_commands.guild_only()
     async def _handle_rules_command(self, interaction: discord.Interaction) -> None:

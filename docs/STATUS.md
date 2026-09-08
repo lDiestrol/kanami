@@ -2,8 +2,8 @@
 
 ## Текущее состояние проекта
 
-В ветке `feature/voice-move-access` реализованы A1 foundation и A2 Web integration
-управляемых capabilities: generic PostgreSQL policies/grants, Discord-независимая
+В ветке `feature/voice-move-access` реализованы A1 foundation, A2 Web integration
+управляемых capabilities и A3 runtime `/move`: generic PostgreSQL policies/grants, Discord-независимая
 authorization и audit mutations. Зарегистрирован только `voice.move`, default
 disabled. Web Admin управляет enable/disable policy и ROLE/USER grants через
 существующий A1 service и atomic audit transaction; новые grants валидируются по
@@ -11,8 +11,11 @@ configured-guild Discord cache, USER selector исключает bot accounts, �
 persisted ROLE/USER grants остаются revocable без Discord runtime. Disabled policy
 сохраняет grants. A2.5 читает authorization state одним SQL statement snapshot,
 а capability HTTP responses — до EOF с общим ограничением размера.
-`/move` runtime, source/destination runtime ACL, self-move и runtime Discord checks
-ещё не реализованы; новых `.env`-настроек нет. Production
+`/move` authorizes via `voice.move`, requires caller effective `view_channel` and
+`connect` on source/destination without native Move Members, and validates bot
+effective access. Stage/AFK destination are unsupported and `user_limit` is not
+pre-checked. Successful action audit `moderation.voice_moved` is distinct from
+observed `voice.moved`; новых `.env`-настроек нет. Production
 по-прежнему находится на прежнем состоянии и новую migration ещё не получал.
 
 Созданы Python-каркас, PostgreSQL persistence foundation, async Alembic
@@ -1019,8 +1022,8 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 A1 foundation и A2 Web policy/ROLE/USER management ранее завершены в
 feature-ветке; A2.5 correctness/hardening завершён отдельным commit `fb477fd`.
-Следующий capability этап — A3 runtime `/move`. Production capability migration
-`5c8e2a7d9f31` ещё не применена.
+A3 runtime `/move` завершён. Production capability migration `5c8e2a7d9f31`
+ещё не применена.
 
 WUI-4A.1 и оба responsive hotfix развёрнуты в production. Первый hotfix исправил
 расположение compact-кнопки «Профиль» справа в member row на tablet width. Второй
@@ -1357,11 +1360,10 @@ automation, settings/env, migrations и intents для `/health` не добав
 
 ## Следующие шаги
 
-- Следующий capability этап — A3 runtime `/move`. Он должен использовать
-  authorization через `voice.move`, проверять source/destination Discord ACL,
-  запрещать self-move, выполнять runtime Discord checks и возвращать controlled
-  Discord errors; успешный move должен записывать audit. Destination user limit
-  не следует pre-check-ить.
+- A3 `/move` завершён: `voice.move`, caller/bot ACL, bounded source revalidation,
+  controlled Discord errors и отдельный important action audit реализованы.
+  Caller native Move Members не требуется; Stage/AFK destination не поддержаны,
+  а destination `user_limit` намеренно не pre-check-ится.
 - Production deployment capability migration `5c8e2a7d9f31` остаётся отдельным
   deployment step и ещё не выполнен.
 

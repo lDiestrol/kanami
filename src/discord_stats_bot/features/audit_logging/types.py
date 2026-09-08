@@ -43,6 +43,7 @@ IMPORTANT_EVENT_TYPES = frozenset(
         "role.updated",
         "moderation.banned",
         "moderation.unbanned",
+        "moderation.voice_moved",
         "web_admin.access_granted",
         "web_admin.access_revoked",
         "web_admin.server_setting_changed",

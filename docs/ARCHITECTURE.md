@@ -10,7 +10,7 @@
 - Первоначальный целевой масштаб — один Discord-сервер примерно на 50–100 пользователей.
 - Основная задача — долговременная статистика активности с особым вниманием к голосовым каналам.
 - Реализованы persistence и service/repository логика voice tracking, startup reconciliation, live voice-state adapter, периодический checkpoint, read-only voice statistics query layer, суточные агрегаты текстовой активности и durable Audit Logging.
-- Discord Gateway runtime подключён для provisioning/reconciliation, live voice и text tracking, connected-only checkpoint, автоматических годовщин и шестнадцати guild-only slash-команд: `/help`, `/profile`, `/stats`, `/games`, `/top`, `/channels`, `/channelstats`, `/together`, `/serverstats`, `/activity`, `/topmessages`, `/achievements`, `/anniversaries`, `/rules`, `/rules-status` и `/health`; pagination ещё не реализована.
+- Discord Gateway runtime подключён для provisioning/reconciliation, live voice и text tracking, connected-only checkpoint, автоматических годовщин и семнадцати guild-only slash-команд: `/help`, `/profile`, `/stats`, `/games`, `/top`, `/channels`, `/channelstats`, `/together`, `/serverstats`, `/activity`, `/topmessages`, `/achievements`, `/anniversaries`, `/rules`, `/rules-status`, `/health` и `/move`; pagination ещё не реализована.
 
 ## Принятые архитектурные решения
 
@@ -53,10 +53,15 @@ deny с типизированной причиной. Discord permission bits �
 `web_admin.capability_policy_changed`, `web_admin.capability_granted` и
 `web_admin.capability_revoked` в той же caller-owned transaction.
 
-A1 generic foundation и A2 Web integration реализованы. `voice.move` остаётся
-default disabled. `/move` runtime, source/destination runtime ACL, self-move и
-runtime Discord checks не реализованы и принадлежат A3. Новых `.env`-настроек
-нет; production deployment capability migration `5c8e2a7d9f31` ещё не выполнен.
+A1 generic foundation, A2 Web integration и A3 runtime `/move` реализованы.
+`voice.move` остаётся default disabled; capability authorization не использует
+Discord permission bits. A3 требует от вызывающего effective `view_channel` и
+`connect` на source/destination, но не требует native Move Members. Destination
+может быть только обычным не-AFK VoiceChannel: Stage и AFK не поддерживаются, а
+`user_limit` намеренно не pre-check-ится. Успешное действие сохраняется как
+important `moderation.voice_moved`, отдельно от наблюдаемого `voice.moved`.
+Новых `.env`-настроек нет; production deployment capability migration
+`5c8e2a7d9f31` ещё не выполнен.
 
 A2.1 добавляет только authenticated read-only Web Admin presentation
 registry definitions и текущих policy/grants. Web слой материализует исключительно
@@ -1324,7 +1329,7 @@ reacceptance workflow намеренно отложены.
   изолированные collectors. В Developer Portal всегда требуется Server Members
   Intent, а Presence Intent — только перед включением Game Tracking.
 - Gateway adapter отвечает только за преобразование Discord cache в полный `(channel_id, channel_kind, is_afk)` snapshot, единый timestamp операции, транзакционные service-вызовы и компактное итоговое логирование; exact/estimated semantics остаётся в application service.
-- `/profile`, `/stats`, `/games`, `/top`, `/topmessages`, `/channels`, `/channelstats`, `/together`, `/serverstats`, `/activity`, `/achievements`, `/anniversaries`, `/rules`, `/rules-status`, `/health` и `/help` добавлены в `app_commands.CommandTree` только для configured guild и синхронизируются вместе одним вызовом в одноразовом `Client.setup_hook()` до Gateway events; `on_ready`/`on_resumed` command sync не вызывают и сохраняют прежнюю voice recovery semantics.
+- `/profile`, `/stats`, `/games`, `/top`, `/topmessages`, `/channels`, `/channelstats`, `/together`, `/serverstats`, `/activity`, `/achievements`, `/anniversaries`, `/rules`, `/rules-status`, `/health`, `/move` и `/help` добавлены в `app_commands.CommandTree` только для configured guild и синхронизируются вместе одним вызовом в одноразовом `Client.setup_hook()` до Gateway events; `on_ready`/`on_resumed` command sync не вызывают и сохраняют прежнюю voice recovery semantics.
 - Slash handler `/stats [user] [period]` проверяет configured guild и invoking-user bot guard, отклоняет bot target, по умолчанию использует `interaction.user` и период 7d. Compact ephemeral embed показывает один согласованный профиль: total, полный rank, logical session count/average, любимый канал, period TOP 3 companions и finite-window trend; all-time trend отсутствует. Ошибка любого из двух query изолируется как единая операция без partial embed; все mentions подавлены через `AllowedMentions.none()`.
 - `/top` имеет optional application-command choice `period` (`today`, `7d`, `30d`, `all`, default `7d`) с русскими названиями и возвращает публичный embed. Persistence ranking не зависит от Discord cache: adapter показывает cached member как кликабельный `<@user_id>`, оставляет fallback для отсутствующего member и подавляет уведомления пользователей, ролей и `@everyone` через `AllowedMentions.none()`.
 - `/help` — статический ephemeral embed с актуальным списком команд; handler не зависит от persistence и не открывает DB session.

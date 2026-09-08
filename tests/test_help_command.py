@@ -40,6 +40,7 @@ def test_help_embed_lists_only_current_commands() -> None:
         "/rules-status",
         "/help",
         "/health",
+        "/move",
     ):
         assert command in text
     assert "/leaderboard" not in text
@@ -55,6 +56,26 @@ def test_help_is_registered_for_configured_guild_only() -> None:
 
     assert client.tree.get_command("help", guild=client._command_guild) is not None
     assert client.tree.get_command("help") is None
+
+
+def test_move_is_registered_only_when_a_handler_is_supplied() -> None:
+    client = DiscordStatsClient(
+        guild_id=10,
+        reference_provisioner=NoOpDependency(),  # type: ignore[arg-type]
+        voice_reconciler=NoOpDependency(),  # type: ignore[arg-type]
+        voice_event_handler=NoOpDependency(),  # type: ignore[arg-type]
+        voice_move_command_handler=NoOpDependency(),  # type: ignore[arg-type]
+    )
+
+    command = client.tree.get_command("move", guild=client._command_guild)
+    assert command is not None
+    assert client.tree.get_command("move") is None
+    assert tuple(parameter.name for parameter in command.parameters) == (
+        "member",
+        "destination",
+    )
+    assert command.default_permissions is None
+    assert command.guild_only is True
 
 
 def test_client_has_static_online_help_game_presence() -> None:

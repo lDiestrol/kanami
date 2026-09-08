@@ -101,6 +101,7 @@ from discord_stats_bot.discord.voice_leaderboard import (
     VoiceLeaderboardCommandHandler,
     build_voice_leaderboard_embed,
 )
+from discord_stats_bot.discord.voice_move import VoiceMoveCommandHandler
 from discord_stats_bot.discord.voice_server_stats import (
     VoiceServerStatisticsCommandHandler,
     build_voice_server_statistics_embed,
@@ -164,6 +165,7 @@ __all__ = [
     "VoiceServerStatisticsCommandHandler",
     "VoiceStatisticsCommandHandler",
     "VoiceTogetherCommandHandler",
+    "VoiceMoveCommandHandler",
     "VoiceActivityCommandHandler",
     "ACTIVITY_PERIOD_LABELS",
     "build_voice_statistics_embed",
