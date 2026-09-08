@@ -97,10 +97,18 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
   concurrent identical grant/revoke, обоих порядков grant/revoke и rollback
   policy/grant/revoke при ошибке audit insert/suppression. Они используют только
   `TEST_DATABASE_URL` и изолированную schema для нескольких соединений.
-- Локальные A2.5 quality gates: targeted suite — 136 passed / 32 skipped;
-  полный pytest — 1463 passed / 39 skipped (39 dependency warnings). Все skips
-  вызваны отсутствием `TEST_DATABASE_URL`, включая 22 новых PostgreSQL сценария.
-  Ruff lint/format и `git diff --check` проходят.
+- A2.5 завершён в commit `fb477fd` (`fix(capabilities): harden authorization
+  consistency`). Chat review и независимый read-only Work review завершены;
+  follow-up regression для concurrent enable/disable добавлен.
+- Реальный `tests/test_capability_integration.py` на disposable PostgreSQL 17.10
+  прошёл: 24 passed, 0 skipped. Полный suite с `TEST_DATABASE_URL`: 1504 passed,
+  0 skipped и 39 warnings. `ruff check .`, `ruff format --check .` и
+  `git diff --check` проходят.
+- Online Alembic validation на disposable PostgreSQL 17.10 прошла полностью:
+  clean DB → `d4e8a1c7b962` → upgrade `5c8e2a7d9f31` → downgrade
+  `d4e8a1c7b962` → повторный upgrade `5c8e2a7d9f31`. После финального upgrade
+  `current = 5c8e2a7d9f31 (head)`; создание обеих capability tables и их
+  PK/FK/CHECK constraints проверено.
 - Web Admin `/admin/capabilities` управляет ROLE и USER grants: selector новых
   grants использует configured-guild cache через Bot Control, USER selector не
   включает bot accounts. Недоступность Discord runtime блокирует только validation
@@ -1009,10 +1017,9 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что сейчас делается
 
-A1 foundation и A2 Web policy/ROLE/USER management завершены в feature-ветке.
-A2.5 correctness/hardening подготовлен к Chat review после локальных quality
-gates. Реальные PostgreSQL guarantees ещё требуют запуска opt-in suite:
-`TEST_DATABASE_URL` в текущем окружении не задана. Runtime `/move` (A3) не начат.
+A1 foundation, A2 Web policy/ROLE/USER management и A2.5 correctness/hardening
+завершены в feature branch commit `fb477fd`. Следующий capability этап — A3
+runtime `/move`. Production capability migration `5c8e2a7d9f31` ещё не применена.
 
 WUI-4A.1 и оба responsive hotfix развёрнуты в production. Первый hotfix исправил
 расположение compact-кнопки «Профиль» справа в member row на tablet width. Второй
@@ -1174,8 +1181,7 @@ automation, settings/env, migrations и intents для `/health` не добав
 
 - Duplicate role/member names в selectors остаются неоднозначными; LOW UX finding
   сознательно отложен за scope A2.5.
-- PostgreSQL A2.5 integration tests добавлены, но не выполнены без
-  `TEST_DATABASE_URL`; production capability migration ещё не развёрнута.
+- Production capability migration `5c8e2a7d9f31` ещё не развёрнута.
 
 - Live text ingestion, reply counting и `/topmessages` прошли production smoke;
   полный install/update flow объединённого состояния ещё не проверен на чистой
@@ -1186,10 +1192,10 @@ automation, settings/env, migrations и intents для `/health` не добав
 - Автоматические годовщины имеют ту же честную at-least-once границу: unique outbox key исключает повторную постановку и обычные restart/reconnect duplicates, но авария после Discord send и до commit `delivered_at` теоретически может повторить сообщение.
 - Для Autorole production требуется `Manage Roles`, а highest role Kanami должна находиться выше configured autorole; production smoke Autorole ещё не выполнен.
 - Локально тестовая БД и `TEST_DATABASE_URL` по-прежнему предоставляются
-  вручную; первый remote GitHub Actions run подтвердил полный suite с disposable
+  вручную; remote GitHub Actions run подтвердил полный suite с disposable
   PostgreSQL 17 без skipped integration tests. Online Alembic migration
-  smoke-test в workflow по-прежнему не входит; существующие 27 warnings не
-  исправлялись.
+  validation уже пройдена в disposable PostgreSQL 17.10; существующие warnings
+  не исправлялись.
 - Автоматическая backup/restore policy и полноценный production health monitoring пока не реализованы; operator обязан отдельно защищать PostgreSQL data.
 - Текущее состояние Operations использует факты Web Admin/Bot Control, а W1.3
   history — отдельные bot-owned sampled observations. Gateway latency не
@@ -1349,10 +1355,13 @@ automation, settings/env, migrations и intents для `/health` не добав
 
 ## Следующие шаги
 
-- Провести Chat review A2.5, затем независимый read-only Work review и Chat decision.
-  Отдельно выполнить opt-in PostgreSQL suite при наличии тестовой БД. Runtime
-  `/move`, source/destination ACL, self-move/runtime Discord checks и production
-  deployment capability migration остаются следующими отдельными этапами.
+- Следующий capability этап — A3 runtime `/move`. Он должен использовать
+  authorization через `voice.move`, проверять source/destination Discord ACL,
+  запрещать self-move, выполнять runtime Discord checks и возвращать controlled
+  Discord errors; успешный move должен записывать audit. Destination user limit
+  не следует pre-check-ить.
+- Production deployment capability migration `5c8e2a7d9f31` остаётся отдельным
+  deployment step и ещё не выполнен.
 
 1. При следующем реальном этапе Rules Compliance / reacceptance проверить
    оставшийся production scenario: Publish новой Rules version → успешный DB
