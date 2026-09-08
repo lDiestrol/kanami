@@ -1017,9 +1017,10 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что сейчас делается
 
-A1 foundation, A2 Web policy/ROLE/USER management и A2.5 correctness/hardening
-завершены в feature branch commit `fb477fd`. Следующий capability этап — A3
-runtime `/move`. Production capability migration `5c8e2a7d9f31` ещё не применена.
+A1 foundation и A2 Web policy/ROLE/USER management ранее завершены в
+feature-ветке; A2.5 correctness/hardening завершён отдельным commit `fb477fd`.
+Следующий capability этап — A3 runtime `/move`. Production capability migration
+`5c8e2a7d9f31` ещё не применена.
 
 WUI-4A.1 и оба responsive hotfix развёрнуты в production. Первый hotfix исправил
 расположение compact-кнопки «Профиль» справа в member row на tablet width. Второй
@@ -1193,8 +1194,9 @@ automation, settings/env, migrations и intents для `/health` не добав
 - Для Autorole production требуется `Manage Roles`, а highest role Kanami должна находиться выше configured autorole; production smoke Autorole ещё не выполнен.
 - Локально тестовая БД и `TEST_DATABASE_URL` по-прежнему предоставляются
   вручную; remote GitHub Actions run подтвердил полный suite с disposable
-  PostgreSQL 17 без skipped integration tests. Online Alembic migration
-  validation уже пройдена в disposable PostgreSQL 17.10; существующие warnings
+  PostgreSQL 17 без skipped integration tests. Локальный online Alembic
+  round-trip на disposable PostgreSQL 17.10 пройден; migration smoke-test в
+  GitHub Actions workflow по-прежнему не входит. Существующие warnings отдельно
   не исправлялись.
 - Автоматическая backup/restore policy и полноценный production health monitoring пока не реализованы; operator обязан отдельно защищать PostgreSQL data.
 - Текущее состояние Operations использует факты Web Admin/Bot Control, а W1.3
