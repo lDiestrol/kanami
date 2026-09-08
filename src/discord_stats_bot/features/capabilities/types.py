@@ -86,6 +86,15 @@ class AuthorizationReason(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class CapabilityAuthorizationState:
+    """Policy override and matching grants from one repository snapshot."""
+
+    enabled: bool | None
+    has_user_grant: bool
+    has_role_grant: bool
+
+
+@dataclass(frozen=True, slots=True)
 class AuthorizationDecision:
     allowed: bool
     reason: AuthorizationReason

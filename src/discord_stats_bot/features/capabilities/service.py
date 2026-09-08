@@ -13,6 +13,7 @@ from discord_stats_bot.features.capabilities.registry import get_capability
 from discord_stats_bot.features.capabilities.types import (
     AuthorizationDecision,
     AuthorizationReason,
+    CapabilityAuthorizationState,
     CapabilityDefinition,
     CapabilityGrant,
     CapabilityKey,
@@ -28,6 +29,16 @@ CAPABILITY_AUDIT_CATEGORY = "web_admin"
 
 
 class CapabilityRepository(Protocol):
+    async def get_authorization_state(
+        self,
+        guild_id: int,
+        capability: CapabilityKey,
+        user_id: int,
+        role_ids: Collection[int],
+    ) -> CapabilityAuthorizationState:
+        """Read policy and matching grants from a single consistent snapshot."""
+        ...
+
     async def lock_guild(self, guild_id: int) -> None: ...
 
     async def get_policy(
@@ -122,17 +133,17 @@ class CapabilityAuthorizationService:
         if any(role_id <= 0 for role_id in role_ids):
             raise ValueError("role_ids must contain only positive values")
         definition = get_capability(capability)
-        policy = await self._repository.get_policy(guild_id, definition.key)
-        enabled = definition.default_enabled if policy is None else policy.enabled
+        state = await self._repository.get_authorization_state(
+            guild_id, definition.key, user_id, role_ids
+        )
+        enabled = definition.default_enabled if state.enabled is None else state.enabled
         if not enabled:
             return AuthorizationDecision(False, AuthorizationReason.DISABLED)
         if is_guild_owner:
             return AuthorizationDecision(True, AuthorizationReason.GUILD_OWNER)
-        if await self._repository.has_user_grant(guild_id, definition.key, user_id):
+        if state.has_user_grant:
             return AuthorizationDecision(True, AuthorizationReason.USER_GRANT)
-        if role_ids and await self._repository.has_any_role_grant(
-            guild_id, definition.key, role_ids
-        ):
+        if state.has_role_grant:
             return AuthorizationDecision(True, AuthorizationReason.ROLE_GRANT)
         return AuthorizationDecision(False, AuthorizationReason.NOT_GRANTED)
 

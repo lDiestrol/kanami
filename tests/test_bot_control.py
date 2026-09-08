@@ -1,6 +1,8 @@
+import asyncio
 import json
 from types import SimpleNamespace
 
+import aiohttp
 import discord
 import pytest
 from pydantic import SecretStr, ValidationError
@@ -40,6 +42,7 @@ from discord_stats_bot.features.server_settings import (
     ServerSettingsRoleOption,
 )
 from discord_stats_bot.web.bot_control import (
+    OPTIONS_RESPONSE_MAX_BYTES,
     AiohttpBotProfileControlClient,
     CapabilityPresentationControlError,
     ServerSettingsControlCategory,
@@ -525,7 +528,8 @@ class FakeResponseContent:
         self.body = body
 
     async def read(self, limit: int) -> bytes:
-        return self.body[:limit]
+        chunk, self.body = self.body[:limit], self.body[limit:]
+        return chunk
 
 
 class FakeControlResponse:
@@ -538,6 +542,28 @@ class FakeControlResponse:
 
     async def __aexit__(self, *args: object) -> None:
         return None
+
+
+class ChunkedResponseContent:
+    """A consuming stream that can return fewer bytes than requested."""
+
+    def __init__(self, chunks):
+        self.chunks = list(chunks)
+        self.read_limits = []
+        self.bytes_read = 0
+
+    async def read(self, limit):
+        self.read_limits.append(limit)
+        if not self.chunks:
+            return b""
+        chunk = self.chunks.pop(0)
+        if isinstance(chunk, Exception):
+            raise chunk
+        if len(chunk) > limit:
+            self.chunks.insert(0, chunk[limit:])
+            chunk = chunk[:limit]
+        self.bytes_read += len(chunk)
+        return chunk
 
 
 class FakeControlHttpSession:
@@ -558,7 +584,11 @@ class CapabilitySubjectsHttpSession:
     def request(self, method: str, url: str, **kwargs: object) -> FakeControlResponse:
         self.calls.append((method, url, kwargs))
         if self.malformed_batch == len(self.calls):
-            return FakeControlResponse(200, b'{"roles":"invalid","members":[]}')
+            response = FakeControlResponse(200, b"")
+            response.content = ChunkedResponseContent(
+                [b'{"roles":[],"members":[]}', b"!"]
+            )
+            return response
         params = kwargs["params"]
         roles = [int(value) for key, value in params if key == "role_id"]
         users = [int(value) for key, value in params if key == "user_id"]
@@ -566,7 +596,94 @@ class CapabilitySubjectsHttpSession:
             "roles": [{"id": value, "name": f"Role {value}"} for value in roles],
             "members": [{"id": value, "name": f"Member {value}"} for value in users],
         }
-        return FakeControlResponse(200, json.dumps(payload).encode())
+        body = json.dumps(payload).encode()
+        response = FakeControlResponse(200, b"")
+        response.content = ChunkedResponseContent([body[:11], body[11:]])
+        return response
+
+
+async def call_capability_client(client, endpoint):
+    if endpoint == "subjects":
+        return await client.get_capability_presentation_subjects((20,), (30,))
+    if endpoint == "roles":
+        return await client.get_capability_role_options()
+    return await client.get_capability_member_options()
+
+
+def chunked_capability_client(chunks):
+    response = FakeControlResponse(200, b"")
+    response.content = ChunkedResponseContent(chunks)
+    http_session = FakeControlHttpSession(response)
+    client = AiohttpBotProfileControlClient(
+        http_session,  # type: ignore[arg-type]
+        base_url="http://127.0.0.1:8765",
+        shared_secret=SecretStr(SHARED_SECRET),
+    )
+    return client, response.content, http_session
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ["subjects", "roles", "members"])
+@pytest.mark.parametrize(
+    "size", [100, OPTIONS_RESPONSE_MAX_BYTES - 1, OPTIONS_RESPONSE_MAX_BYTES]
+)
+async def test_capability_client_reads_full_chunked_body_within_limit(endpoint, size):
+    body = b'{"roles":[{"id":20,"name":"Team"}],"members":[{"id":30,"name":"Alice"}]}'
+    body += b" " * (size - len(body))
+    client, stream, http_session = chunked_capability_client(
+        [body[:9], body[9:41], body[41:]]
+    )
+
+    result = await call_capability_client(client, endpoint)
+
+    expected = {
+        "subjects": CapabilityPresentationSubjects(((20, "Team"),), ((30, "Alice"),)),
+        "roles": ((20, "Team"),),
+        "members": ((30, "Alice"),),
+    }
+    assert result == expected[endpoint]
+    assert stream.bytes_read == size
+    assert not stream.chunks
+    assert len(stream.read_limits) >= 4  # Includes the final EOF read.
+    assert http_session.calls[0][2]["allow_redirects"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ["subjects", "roles", "members"])
+async def test_capability_client_rejects_cumulative_over_limit_immediately(endpoint):
+    body = b'{"roles":[],"members":[]}'
+    body += b" " * (OPTIONS_RESPONSE_MAX_BYTES - len(body))
+    client, stream, _ = chunked_capability_client(
+        [body[:10], body[10:], b" ", AssertionError("must stop at limit + 1")]
+    )
+
+    with pytest.raises(CapabilityPresentationControlError, match="control_unavailable"):
+        await call_capability_client(client, endpoint)
+
+    assert stream.bytes_read == OPTIONS_RESPONSE_MAX_BYTES + 1
+    assert stream.read_limits[-1] == 1
+    assert len(stream.chunks) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ["subjects", "roles", "members"])
+@pytest.mark.parametrize(
+    "later_chunk,category",
+    [
+        (b"!", "malformed_response"),
+        (asyncio.TimeoutError(), "timeout"),
+        (aiohttp.ClientPayloadError("incomplete body"), "control_unavailable"),
+    ],
+)
+async def test_capability_client_later_chunk_failure_never_returns_prefix(
+    endpoint, later_chunk, category
+):
+    client, stream, _ = chunked_capability_client(
+        [b'{"roles":[],"members":[]}', later_chunk]
+    )
+    with pytest.raises(CapabilityPresentationControlError, match=category):
+        await call_capability_client(client, endpoint)
+    assert len(stream.read_limits) >= 2
 
 
 @pytest.mark.asyncio
@@ -1139,6 +1256,38 @@ def test_capability_members_endpoint_is_authenticated_and_returns_options() -> N
         "roles": [],
         "members": [{"id": 30, "name": "Alice"}, {"id": 31, "name": "Bob"}],
     }
+
+
+@pytest.mark.parametrize(
+    "error,expected_error,logged",
+    [
+        (RuntimeError("unexpected"), "capability_presentation_failure", True),
+        (CapabilityPresentationRuntimeUnavailableError(), "runtime_unavailable", False),
+    ],
+)
+def test_capability_member_options_logs_only_unexpected_failure(
+    caplog, error, expected_error, logged
+):
+    app = create_bot_control_app(
+        FakeOperator(),
+        shared_secret=SecretStr(SHARED_SECRET),
+        capability_presentation_subjects_operator=FakeCapabilitySubjectsOperator(error),
+    )
+    with TestClient(app) as client:
+        response = client.get(
+            "/control/v1/capabilities/members",
+            headers={"Authorization": f"Bearer {SHARED_SECRET}"},
+        )
+    assert response.status_code == 503
+    assert response.json() == {"error": expected_error}
+    records = [
+        record
+        for record in caplog.records
+        if "capability_member_options_failed" in record.message
+    ]
+    assert len(records) == int(logged)
+    if logged:
+        assert records[0].exc_info is not None
 
 
 def test_capability_members_endpoint_maps_unavailable_runtime_and_missing_operator() -> (

@@ -593,7 +593,10 @@ def create_bot_control_app(
             )
         except CapabilityPresentationRuntimeUnavailableError:
             return JSONResponse({"error": "runtime_unavailable"}, status_code=503)
-        except Exception:
+        except Exception as error:
+            logger.exception(
+                "capability_member_options_failed error_type=%s", type(error).__name__
+            )
             return JSONResponse(
                 {"error": "capability_presentation_failure"}, status_code=503
             )

@@ -8,6 +8,7 @@ from discord_stats_bot.features.capabilities import (
     VOICE_MOVE,
     AuthorizationReason,
     CapabilityAuthorizationService,
+    CapabilityAuthorizationState,
     CapabilityGrant,
     CapabilityMutationService,
     CapabilitySubjectType,
@@ -30,6 +31,16 @@ class MemoryRepository:
 
     async def get_policy(self, guild_id: int, capability: str):
         return self.policy
+
+    async def get_authorization_state(self, guild_id, capability, user_id, role_ids):
+        return CapabilityAuthorizationState(
+            None if self.policy is None else self.policy.enabled,
+            (CapabilitySubjectType.USER, user_id) in self.grants,
+            any(
+                (CapabilitySubjectType.ROLE, role_id) in self.grants
+                for role_id in role_ids
+            ),
+        )
 
     async def set_policy(self, **values: object) -> GuildCapabilityPolicy:
         self.policy = GuildCapabilityPolicy(**values)  # type: ignore[arg-type]

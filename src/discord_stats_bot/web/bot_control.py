@@ -490,8 +490,8 @@ class AiohttpBotProfileControlClient:
                 params=params,
                 allow_redirects=False,
             ) as response:
-                body = await response.content.read(OPTIONS_RESPONSE_MAX_BYTES + 1)
-                if len(body) > OPTIONS_RESPONSE_MAX_BYTES or response.status != 200:
+                body = await self._read_capability_response_body(response)
+                if response.status != 200:
                     raise CapabilityPresentationControlError("control_unavailable")
                 try:
                     payload = _CapabilitySubjectsPayload.model_validate_json(body)
@@ -518,8 +518,8 @@ class AiohttpBotProfileControlClient:
                 headers=headers,
                 allow_redirects=False,
             ) as response:
-                body = await response.content.read(OPTIONS_RESPONSE_MAX_BYTES + 1)
-                if len(body) > OPTIONS_RESPONSE_MAX_BYTES or response.status != 200:
+                body = await self._read_capability_response_body(response)
+                if response.status != 200:
                     raise CapabilityPresentationControlError("control_unavailable")
                 try:
                     payload = _CapabilitySubjectsPayload.model_validate_json(body)
@@ -542,8 +542,8 @@ class AiohttpBotProfileControlClient:
                 headers=headers,
                 allow_redirects=False,
             ) as response:
-                body = await response.content.read(OPTIONS_RESPONSE_MAX_BYTES + 1)
-                if len(body) > OPTIONS_RESPONSE_MAX_BYTES or response.status != 200:
+                body = await self._read_capability_response_body(response)
+                if response.status != 200:
                     raise CapabilityPresentationControlError("control_unavailable")
                 payload = _CapabilitySubjectsPayload.model_validate_json(body)
                 return self._validated_role_options(payload.members)
@@ -553,6 +553,20 @@ class AiohttpBotProfileControlClient:
             raise CapabilityPresentationControlError("timeout") from error
         except aiohttp.ClientError as error:
             raise CapabilityPresentationControlError("control_unavailable") from error
+
+    @staticmethod
+    async def _read_capability_response_body(response: aiohttp.ClientResponse) -> bytes:
+        """Read to EOF, probing at most one byte beyond the total body limit."""
+        body = bytearray()
+        while True:
+            chunk = await response.content.read(
+                min(65_536, OPTIONS_RESPONSE_MAX_BYTES - len(body) + 1)
+            )
+            if not chunk:
+                return bytes(body)
+            if len(body) + len(chunk) > OPTIONS_RESPONSE_MAX_BYTES:
+                raise CapabilityPresentationControlError("control_unavailable")
+            body.extend(chunk)
 
     @staticmethod
     def _deduplicate_capability_subject_ids(values: tuple[int, ...]) -> tuple[int, ...]:

@@ -2,14 +2,17 @@
 
 ## Текущее состояние проекта
 
-В ветке `feature/voice-move-access` реализован локальный A1 foundation
+В ветке `feature/voice-move-access` реализованы A1 foundation и A2 Web integration
 управляемых capabilities: generic PostgreSQL policies/grants, Discord-независимая
 authorization и audit mutations. Зарегистрирован только `voice.move`, default
 disabled. Web Admin управляет enable/disable policy и ROLE/USER grants через
 существующий A1 service и atomic audit transaction; новые grants валидируются по
 configured-guild Discord cache, USER selector исключает bot accounts, а stale
 persisted ROLE/USER grants остаются revocable без Discord runtime. Disabled policy
-сохраняет grants. `/move` runtime всё ещё не реализован, новых `.env`-настроек нет. Production
+сохраняет grants. A2.5 читает authorization state одним SQL statement snapshot,
+а capability HTTP responses — до EOF с общим ограничением размера.
+`/move` runtime, source/destination runtime ACL, self-move и runtime Discord checks
+ещё не реализованы; новых `.env`-настроек нет. Production
 по-прежнему находится на прежнем состоянии и новую migration ещё не получал.
 
 Созданы Python-каркас, PostgreSQL persistence foundation, async Alembic
@@ -83,6 +86,21 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
   advisory transaction lock pattern и идемпотентны.
 - Capability policy/grant/revoke записывают important history-only audit events
   существующей подсистемой; no-op mutation audit не создаёт.
+- A2.5 устраняет смешение policy/grants из разных READ COMMITTED snapshots:
+  authorization использует один SELECT без guild lock и без hidden transaction
+  boundaries. Disabled по-прежнему имеет приоритет над owner и любыми grants.
+- Capability Bot Control client читает полный body несколькими chunks с общим
+  лимитом; повреждённый поздний chunk/batch не возвращает partial labels.
+  Unexpected member-options exception логируется, controlled runtime 503 — без
+  traceback noise.
+- Добавлены opt-in PostgreSQL regressions для USER/ROLE authorization race,
+  concurrent identical grant/revoke, обоих порядков grant/revoke и rollback
+  policy/grant/revoke при ошибке audit insert/suppression. Они используют только
+  `TEST_DATABASE_URL` и изолированную schema для нескольких соединений.
+- Локальные A2.5 quality gates: targeted suite — 136 passed / 32 skipped;
+  полный pytest — 1463 passed / 39 skipped (39 dependency warnings). Все skips
+  вызваны отсутствием `TEST_DATABASE_URL`, включая 22 новых PostgreSQL сценария.
+  Ruff lint/format и `git diff --check` проходят.
 - Web Admin `/admin/capabilities` управляет ROLE и USER grants: selector новых
   grants использует configured-guild cache через Bot Control, USER selector не
   включает bot accounts. Недоступность Discord runtime блокирует только validation
@@ -991,9 +1009,10 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что сейчас делается
 
-A1 capability foundation реализован в текущей feature-ветке и проходит локальные
-quality gates. Интеграция с Web Admin и Discord `/move` сознательно отложена на
-следующие этапы.
+A1 foundation и A2 Web policy/ROLE/USER management завершены в feature-ветке.
+A2.5 correctness/hardening подготовлен к Chat review после локальных quality
+gates. Реальные PostgreSQL guarantees ещё требуют запуска opt-in suite:
+`TEST_DATABASE_URL` в текущем окружении не задана. Runtime `/move` (A3) не начат.
 
 WUI-4A.1 и оба responsive hotfix развёрнуты в production. Первый hotfix исправил
 расположение compact-кнопки «Профиль» справа в member row на tablet width. Второй
@@ -1153,6 +1172,11 @@ automation, settings/env, migrations и intents для `/health` не добав
 
 ## Известные проблемы
 
+- Duplicate role/member names в selectors остаются неоднозначными; LOW UX finding
+  сознательно отложен за scope A2.5.
+- PostgreSQL A2.5 integration tests добавлены, но не выполнены без
+  `TEST_DATABASE_URL`; production capability migration ещё не развёрнута.
+
 - Live text ingestion, reply counting и `/topmessages` прошли production smoke;
   полный install/update flow объединённого состояния ещё не проверен на чистой
   Debian 13 VM. Автоматические тесты не подключаются к production
@@ -1192,6 +1216,10 @@ automation, settings/env, migrations и intents для `/health` не добав
   vanilla Caddy требует external edge/firewall для login/callback rate limiting.
 
 ## Важные принятые решения
+
+- Capability authorization читает policy и matching grants из одного SQL statement
+  snapshot. Per-guild advisory transaction lock используется только mutations;
+  caller сохраняет управление transaction, mutation и audit атомарны.
 
 - G3A не создаёт второй алгоритм игровой статистики: Web Admin read-side
   переиспользует `GameStatisticsService`, его timezone/canonicalization semantics
@@ -1321,6 +1349,11 @@ automation, settings/env, migrations и intents для `/health` не добав
 
 ## Следующие шаги
 
+- Провести Chat review A2.5, затем независимый read-only Work review и Chat decision.
+  Отдельно выполнить opt-in PostgreSQL suite при наличии тестовой БД. Runtime
+  `/move`, source/destination ACL, self-move/runtime Discord checks и production
+  deployment capability migration остаются следующими отдельными этапами.
+
 1. При следующем реальном этапе Rules Compliance / reacceptance проверить
    оставшийся production scenario: Publish новой Rules version → успешный DB
    commit → automatic Bot Control sync → обновление существующего managed message
@@ -1337,4 +1370,3 @@ automation, settings/env, migrations и intents для `/health` не добав
    конкретный private `WEB_ADMIN_HOST` + opt-in, разрешить TCP/8000 только с IP
    proxy VM, сохранить 8765/5432 loopback-only, затем выполнить OAuth и все четыре
    bot-profile smoke tests. Только после проверки переключить DNS и убрать Caddy.
-- Web Admin can manage `voice.move` ROLE grants through configured-guild Bot Control options; stale persisted grants remain revocable and disabled policies retain grants.

@@ -3,11 +3,12 @@
 from collections.abc import Collection
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, false, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from discord_stats_bot.features.capabilities import (
+    CapabilityAuthorizationState,
     CapabilityGrant,
     CapabilityKey,
     CapabilitySubjectType,
@@ -24,6 +25,45 @@ class SqlAlchemyCapabilityRepository:
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def get_authorization_state(
+        self,
+        guild_id: int,
+        capability: CapabilityKey,
+        user_id: int,
+        role_ids: Collection[int],
+    ) -> CapabilityAuthorizationState:
+        """One SELECT snapshot, including at READ COMMITTED; no guild lock."""
+        self._validate_id(guild_id, "guild_id")
+        self._validate_id(user_id, "user_id")
+        self._validate_capability(capability)
+        if any(role_id <= 0 for role_id in role_ids):
+            raise ValueError("role_ids must contain only positive values")
+        policy = select(GuildCapabilityPolicyModel.enabled).where(
+            GuildCapabilityPolicyModel.guild_id == guild_id,
+            GuildCapabilityPolicyModel.capability_key == capability,
+        )
+        grants = select(GuildCapabilityGrantModel.subject_id).where(
+            GuildCapabilityGrantModel.guild_id == guild_id,
+            GuildCapabilityGrantModel.capability_key == capability,
+        )
+        user_grant = grants.where(
+            GuildCapabilityGrantModel.subject_type == CapabilitySubjectType.USER.value,
+            GuildCapabilityGrantModel.subject_id == user_id,
+        ).exists()
+        role_grant = (
+            grants.where(
+                GuildCapabilityGrantModel.subject_type
+                == CapabilitySubjectType.ROLE.value,
+                GuildCapabilityGrantModel.subject_id.in_(role_ids),
+            ).exists()
+            if role_ids
+            else false()
+        )
+        # Scalar columns avoid stale ORM identity-map values in caller sessions.
+        statement = select(policy.scalar_subquery(), user_grant, role_grant)
+        row = (await self._session.execute(statement)).one()
+        return CapabilityAuthorizationState(*row)
 
     async def lock_guild(self, guild_id: int) -> None:
         self._validate_id(guild_id, "guild_id")

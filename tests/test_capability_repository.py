@@ -9,6 +9,7 @@ from sqlalchemy.dialects import postgresql
 
 from discord_stats_bot.features.capabilities import (
     VOICE_MOVE,
+    CapabilityAuthorizationState,
     CapabilitySubjectType,
 )
 from discord_stats_bot.persistence.repositories import SqlAlchemyCapabilityRepository
@@ -30,6 +31,9 @@ class FakeScalarResult:
 
     def scalars(self):
         return self.values
+
+    def one(self):
+        return self.value
 
 
 class FakeSession:
@@ -169,3 +173,29 @@ def test_repository_has_no_hidden_transaction_control() -> None:
         and isinstance(node.func, ast.Attribute)
         and node.func.attr in {"begin", "commit", "rollback"}
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role_ids", [(), (7, 8, 9)])
+async def test_authorization_reads_policy_and_both_grants_in_one_select(role_ids):
+    session = FakeSession(FakeScalarResult((None, False, bool(role_ids))))
+    repository = SqlAlchemyCapabilityRepository(session)  # type: ignore[arg-type]
+
+    state = await repository.get_authorization_state(1, VOICE_MOVE, 2, role_ids)
+
+    assert state == CapabilityAuthorizationState(None, False, bool(role_ids))
+    assert len(session.statements) == 1
+    statement = sql(session.statements[0])
+    assert statement.startswith("SELECT (SELECT guild_capability_policies.enabled")
+    assert "guild_capability_policies.guild_id = 1" in statement
+    assert "guild_capability_policies.capability_key = 'voice.move'" in statement
+    assert "guild_capability_grants.guild_id = 1" in statement
+    assert "guild_capability_grants.capability_key = 'voice.move'" in statement
+    assert "subject_type = 'user'" in statement
+    assert "subject_id = 2" in statement
+    assert statement.count("EXISTS") == (2 if role_ids else 1)
+    if role_ids:
+        assert "subject_type = 'role'" in statement
+        assert "subject_id IN (7, 8, 9)" in statement
+    assert "pg_advisory" not in statement
+    assert "FOR UPDATE" not in statement

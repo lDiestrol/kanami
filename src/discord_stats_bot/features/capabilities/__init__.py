@@ -20,6 +20,7 @@ from discord_stats_bot.features.capabilities.service import (
 from discord_stats_bot.features.capabilities.types import (
     AuthorizationDecision,
     AuthorizationReason,
+    CapabilityAuthorizationState,
     CapabilityDefinition,
     CapabilityGrant,
     CapabilityKey,
@@ -37,6 +38,7 @@ __all__ = [
     "AuthorizationDecision",
     "AuthorizationReason",
     "CapabilityAuthorizationService",
+    "CapabilityAuthorizationState",
     "CapabilityDefinition",
     "CapabilityGrant",
     "CapabilityKey",

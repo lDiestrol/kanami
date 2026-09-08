@@ -14,7 +14,7 @@
 
 ## Принятые архитектурные решения
 
-### Managed capabilities foundation (A1)
+### Managed capabilities (A1 + A2, A2.5 hardening)
 
 Внутренние управляемые права Kanami представлены Discord-независимыми
 capability keys. Явный code registry является allowlist поддерживаемых прав и
@@ -34,6 +34,17 @@ rows не хранятся. Mutation repository работает в caller-owned
 сериализует изменения guild через PostgreSQL advisory transaction lock и не
 выполняет скрытых commit/rollback.
 
+Authorization читает policy override и matching USER/ROLE grants одним SELECT
+(scalar policy subquery + EXISTS), то есть из одного statement snapshot даже при
+PostgreSQL READ COMMITTED. Отсутствующая policy представлена `None`, default
+остаётся ответственностью registry/service. Читаются scalar columns, поэтому
+решение не зависит от устаревших ORM objects в identity map caller session.
+Advisory transaction lock оставлен только на mutations: на будущем `/move`
+hot path он ненужно сериализовал бы весь guild до конца caller transaction,
+включая server-settings mutations с тем же lock key. Repository не меняет
+isolation level и не выполняет commit/rollback. Snapshot гарантирует согласованность
+решения при чтении; он не блокирует последующие изменения до Discord action.
+
 Authorization сначала проверяет effective enabled state, затем Discord Guild
 Owner, direct user grant и наличие хотя бы одной role grant; иначе возвращается
 deny с типизированной причиной. Discord permission bits не входят в API и не
@@ -42,9 +53,10 @@ deny с типизированной причиной. Discord permission bits �
 `web_admin.capability_policy_changed`, `web_admin.capability_granted` и
 `web_admin.capability_revoked` в той же caller-owned transaction.
 
-A1 не добавляет `.env`-конфигурацию, Web Admin UI/routes, `/move` slash-команду
-или voice move runtime. Capability foundation отвечает только за доступ к
-действию Kanami; runtime-specific preconditions принадлежат последующим этапам.
+A1 generic foundation и A2 Web integration реализованы. `voice.move` остаётся
+default disabled. `/move` runtime, source/destination runtime ACL, self-move и
+runtime Discord checks не реализованы и принадлежат A3. Новых `.env`-настроек
+нет; production deployment capability migration `5c8e2a7d9f31` ещё не выполнен.
 
 A2.1 добавляет только authenticated read-only Web Admin presentation
 registry definitions и текущих policy/grants. Web слой материализует исключительно
@@ -62,6 +74,16 @@ A2.2 добавляет direct Web Admin POST mutation только для effec
 сохраняет policy и existing audit event; Discord runtime и Bot Control для этой
 DB-only операции не нужны. POST защищён существующими CSRF, fresh Web Admin
 authorization и rate-limit boundaries.
+
+A2.3/A2.4 добавляют управление ROLE/USER grants: новый grant требует live target
+из configured-guild Bot Control cache, USER selector исключает bot accounts.
+Stale ROLE/USER grants можно отозвать без Discord runtime; disabled policy
+сохраняет оба типа grants. Web Admin OWNER/ADMIN не являются capability grants.
+
+A2.5 capability HTTP client читает subjects/roles/members body до EOF несколькими
+bounded reads с единым лимитом `OPTIONS_RESPONSE_MAX_BYTES`; превышение лимита,
+ошибка JSON или любого последующего batch отклоняют весь lookup без partial labels.
+Timeout, ClientError и запрет redirects сохраняются.
 
 Статус перечисленных ниже решений: принято. Дата фиксации: 2026-08-10.
 
@@ -1386,7 +1408,3 @@ backup-политика остаются открытыми эксплуатац
 - дополнительные bot permissions и OAuth scopes, если появятся новые функции;
 - способ создания и удаления временного PostgreSQL для DB integration tests;
 - backup-политику и полноценный production health monitoring на этапе deployment.
-- Web Admin manages both ROLE and USER capability grants through configured-guild
-  Bot Control cache validation. New ROLE/USER grants require a live cache target;
-  the USER selector excludes bot accounts. Stale persisted ROLE/USER grants remain
-  revocable without Discord runtime, and a disabled policy keeps both grant types.
