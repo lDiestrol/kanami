@@ -18,6 +18,10 @@ from tests.support.discord import make_interaction
 
 
 class SessionFactory:
+    def __init__(self, *, commit_fail=False):
+        self.commit_fail = commit_fail
+        self.events = []
+
     def __call__(self):
         return self
 
@@ -28,7 +32,25 @@ class SessionFactory:
         return None
 
     def begin(self):
-        return self
+        return Transaction(self)
+
+
+class Transaction:
+    def __init__(self, factory):
+        self.factory = factory
+
+    async def __aenter__(self):
+        return object()
+
+    async def __aexit__(self, exc_type, *_):
+        if exc_type is not None:
+            self.factory.events.append("rollback")
+            return None
+        if self.factory.commit_fail:
+            self.factory.events.append("commit_failed")
+            raise RuntimeError("commit failed")
+        self.factory.events.append("commit")
+        return None
 
 
 class CapabilityRepository:
@@ -42,13 +64,15 @@ class CapabilityRepository:
 
 
 class AuditRepository:
-    def __init__(self, fail=False):
+    def __init__(self, events, fail=False):
         self.drafts, self.fail = [], fail
+        self.events = events
 
     async def create(self, draft, *, expires_at):
         if self.fail:
             raise RuntimeError("private audit failure")
         self.drafts.append((draft, expires_at))
+        self.events.append("create")
 
 
 def permissions(**overrides):
@@ -56,6 +80,52 @@ def permissions(**overrides):
         view_channel=overrides.get("view_channel", True),
         connect=overrides.get("connect", True),
         move_members=overrides.get("move_members", True),
+    )
+
+
+def native_permissions_for(member_id, role_ids, overwrites):
+    """Resolve a channel ACL through discord.py's native overwrite algorithm."""
+
+    class Guild:
+        id = 10
+        owner_id = 1
+        default_role = SimpleNamespace(permissions=discord.Permissions.none())
+
+        def __init__(self):
+            self.roles = {
+                7: SimpleNamespace(
+                    _permissions=discord.Permissions(
+                        view_channel=True, connect=True
+                    ).value
+                ),
+                8: SimpleNamespace(
+                    _permissions=discord.Permissions(
+                        view_channel=True, connect=True, move_members=True
+                    ).value
+                ),
+            }
+
+        def get_role(self, role_id):
+            return self.roles.get(role_id)
+
+    guild = Guild()
+    member_value = object.__new__(discord.Member)
+    member_value._user = SimpleNamespace(id=member_id)
+    member_value._roles = discord.utils.SnowflakeList([guild.id, *role_ids])
+    member_value.timed_out_until = None
+    channel_value = SimpleNamespace(guild=guild, _overwrites=overwrites)
+    return discord.abc.GuildChannel.permissions_for(channel_value, member_value)
+
+
+def overwrite(overwrite_id, overwrite_type, **permissions_to_set):
+    allow, deny = discord.PermissionOverwrite(**permissions_to_set).pair()
+    return discord.abc._Overwrites(
+        {
+            "id": str(overwrite_id),
+            "type": overwrite_type,
+            "allow": str(allow.value),
+            "deny": str(deny.value),
+        }
     )
 
 
@@ -80,19 +150,23 @@ def environment(
     role=False,
     owner_id=99,
     caller_id=20,
+    bot_member_id=99,
     caller_bot=False,
     roles=(),
     target_bot=False,
     audit_fail=False,
+    commit_fail=False,
+    wake_delivery=None,
 ):
     capability, audit, sessions = (
         CapabilityRepository(enabled, user, role),
-        AuditRepository(audit_fail),
-        SessionFactory(),
+        None,
+        SessionFactory(commit_fail=commit_fail),
     )
+    audit = AuditRepository(sessions.events, audit_fail)
     guild = MagicMock()
     guild.id, guild.owner_id, guild.afk_channel = 10, owner_id, None
-    guild.me = member(99, bot=True)
+    guild.me = member(bot_member_id, bot=True)
     caller, target = (
         member(caller_id, bot=caller_bot, roles=roles),
         member(30, bot=target_bot),
@@ -106,6 +180,7 @@ def environment(
         guild_id=10,
         capability_repository_factory=lambda _: capability,
         audit_repository_factory=lambda _: audit,
+        wake_delivery=wake_delivery,
     )  # type: ignore[arg-type]
     return SimpleNamespace(
         handler=handler,
@@ -117,6 +192,7 @@ def environment(
         destination=destination,
         capability=capability,
         audit=audit,
+        sessions=sessions,
     )
 
 
@@ -261,6 +337,81 @@ async def test_missing_bot_effective_acl_rejects_move(permission):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("permission", ["view_channel", "connect", "move_members"])
+async def test_missing_destination_bot_effective_acl_rejects_move(permission):
+    env = environment()
+    env.destination.permissions_for.side_effect = lambda who: (
+        permissions(**{permission: False}) if who is env.guild.me else permissions()
+    )
+    await run(env)
+    env.target.move_to.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_real_discord_overwrites_control_caller_and_bot_acl_on_both_channels():
+    env = environment(owner_id=1)
+    caller_acl = [
+        overwrite(10, 0, view_channel=False, connect=False),
+        overwrite(7, 0, view_channel=True, connect=False),
+        overwrite(20, 1, connect=True),
+    ]
+    bot_acl = [
+        overwrite(10, 0, view_channel=False, connect=False, move_members=False),
+        overwrite(8, 0, view_channel=True, connect=True, move_members=True),
+    ]
+    env.caller._roles = discord.utils.SnowflakeList([10, 7])
+    env.guild.me._roles = discord.utils.SnowflakeList([10, 8])
+    for item, caller_overwrites, bot_overwrites in (
+        (env.source, caller_acl, bot_acl),
+        (env.destination, caller_acl, bot_acl),
+    ):
+        item.permissions_for.side_effect = (
+            lambda who, caller_overwrites=caller_overwrites, bot_overwrites=bot_overwrites: (
+                native_permissions_for(
+                    who.id,
+                    [7] if who is env.caller else [8],
+                    caller_overwrites if who is env.caller else bot_overwrites,
+                )
+            )
+        )
+
+    await run(env)
+
+    env.target.move_to.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_stage_and_afk_sources_are_allowed_with_effective_acl():
+    for source in (
+        MagicMock(spec=discord.StageChannel),
+        None,
+    ):
+        env = environment()
+        if source is None:
+            source = env.guild.afk_channel = channel(41, env.guild)
+        else:
+            source.id, source.name, source.guild = 41, "stage-41", env.guild
+            source.permissions_for.return_value = permissions()
+        env.target.voice = SimpleNamespace(channel=source)
+        await run(env)
+        env.target.move_to.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_stage_and_afk_destinations_are_rejected():
+    env = environment()
+    stage = MagicMock(spec=discord.StageChannel)
+    stage.id, stage.guild = 51, env.guild
+    await env.handler.handle(env.interaction, env.target, stage)  # type: ignore[arg-type]
+    env.target.move_to.assert_not_awaited()
+
+    env = environment()
+    env.guild.afk_channel = env.destination
+    await run(env)
+    env.target.move_to.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_full_destination_is_left_to_discord_move_api():
     env = environment()
     env.destination.user_limit, env.destination.members = 1, [member(88)]
@@ -335,6 +486,47 @@ async def test_audit_failure_keeps_successful_move_and_never_rolls_back():
     env = environment(audit_fail=True)
     await run(env)
     env.target.move_to.assert_awaited_once()
+    assert "перемещён" in reply(env) and "аудит" in reply(env)
+
+
+@pytest.mark.asyncio
+async def test_audit_commit_precedes_single_delivery_wake_after_move():
+    events = []
+    env = environment(wake_delivery=lambda: events.append("wake"))
+    env.target.move_to.side_effect = lambda *args, **kwargs: events.append("move")
+    env.audit.events = events
+    env.sessions.events = events
+
+    await run(env)
+
+    assert events == ["move", "create", "commit", "wake"]
+
+
+@pytest.mark.asyncio
+async def test_audit_create_failure_does_not_commit_or_wake_or_rollback_move():
+    events = []
+    env = environment(audit_fail=True, wake_delivery=lambda: events.append("wake"))
+    env.target.move_to.side_effect = lambda *args, **kwargs: events.append("move")
+    env.audit.events = events
+    env.sessions.events = events
+
+    await run(env)
+
+    assert events == ["move", "rollback"]
+    assert "перемещён" in reply(env) and "аудит" in reply(env)
+
+
+@pytest.mark.asyncio
+async def test_audit_commit_failure_does_not_wake_or_rollback_discord_move():
+    events = []
+    env = environment(commit_fail=True, wake_delivery=lambda: events.append("wake"))
+    env.target.move_to.side_effect = lambda *args, **kwargs: events.append("move")
+    env.audit.events = events
+    env.sessions.events = events
+
+    await run(env)
+
+    assert events == ["move", "create", "commit_failed"]
     assert "перемещён" in reply(env) and "аудит" in reply(env)
 
 

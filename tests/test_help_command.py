@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock, MagicMock
+
 import discord
 import pytest
 
@@ -76,6 +78,42 @@ def test_move_is_registered_only_when_a_handler_is_supplied() -> None:
     )
     assert command.default_permissions is None
     assert command.guild_only is True
+    serialized = command.to_dict(client.tree)
+    assert [(option["name"], option["type"]) for option in serialized["options"]] == [
+        ("member", discord.AppCommandOptionType.user.value),
+        ("destination", discord.AppCommandOptionType.channel.value),
+    ]
+    assert serialized["options"][1]["channel_types"] == [
+        discord.ChannelType.voice.value
+    ]
+
+
+def test_move_is_not_registered_without_a_handler() -> None:
+    client = make_client()
+
+    assert client.tree.get_command("move", guild=client._command_guild) is None
+    assert client.tree.get_command("move") is None
+
+
+@pytest.mark.asyncio
+async def test_move_command_forwards_original_invocation_to_handler() -> None:
+    handler = MagicMock()
+    handler.handle = AsyncMock()
+    client = DiscordStatsClient(
+        guild_id=10,
+        reference_provisioner=NoOpDependency(),  # type: ignore[arg-type]
+        voice_reconciler=NoOpDependency(),  # type: ignore[arg-type]
+        voice_event_handler=NoOpDependency(),  # type: ignore[arg-type]
+        voice_move_command_handler=handler,  # type: ignore[arg-type]
+    )
+    command = client.tree.get_command("move", guild=client._command_guild)
+    interaction = make_interaction()
+    member = MagicMock(spec=discord.Member)
+    destination = MagicMock(spec=discord.VoiceChannel)
+
+    await command.callback(client, interaction, member, destination)  # type: ignore[union-attr,arg-type]
+
+    handler.handle.assert_awaited_once_with(interaction, member, destination)
 
 
 def test_client_has_static_online_help_game_presence() -> None:
