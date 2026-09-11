@@ -68,6 +68,12 @@ from discord_stats_bot.web.bot_profile import (
     admin_bot_profile_nickname,
     admin_bot_profile_nickname_reset,
 )
+from discord_stats_bot.web.capabilities import (
+    WebAdminCapabilitiesReadService,
+    WebAdminCapabilityPolicyMutationService,
+    admin_capabilities,
+    admin_capabilities_update,
+)
 from discord_stats_bot.web.dashboard import (
     WebAdminDashboard,
     WebAdminDashboardService,
@@ -173,6 +179,12 @@ AdministratorServiceFactory = Callable[[object, WebSettings], AdministratorServi
 AuditLogServiceFactory = Callable[[object, WebSettings], AuditLogService]
 ServerSettingsReadServiceFactory = Callable[
     [object, WebSettings], WebAdminServerSettingsReadService
+]
+CapabilitiesReadServiceFactory = Callable[
+    [object, WebSettings, BotProfileControl], WebAdminCapabilitiesReadService
+]
+CapabilitiesMutationServiceFactory = Callable[
+    [object, WebSettings], WebAdminCapabilityPolicyMutationService
 ]
 OAuthClientFactory = Callable[
     [aiohttp.ClientSession, WebSettings], OAuthIdentityProvider
@@ -1003,6 +1015,10 @@ def create_app(
     server_settings_read_service_factory: (
         ServerSettingsReadServiceFactory | None
     ) = None,
+    capabilities_read_service_factory: CapabilitiesReadServiceFactory | None = None,
+    capabilities_mutation_service_factory: (
+        CapabilitiesMutationServiceFactory | None
+    ) = None,
     dashboard_service_factory: DashboardServiceFactory | None = None,
     system_status_service_factory: SystemStatusServiceFactory | None = None,
     rules_service_factory: RulesServiceFactory | None = None,
@@ -1121,6 +1137,29 @@ def create_app(
                     http_session,
                     web_settings,
                 )
+                capabilities_read_service = (
+                    capabilities_read_service_factory(
+                        resources.session_factory,
+                        web_settings,
+                        bot_profile_control,
+                    )
+                    if capabilities_read_service_factory is not None
+                    else WebAdminCapabilitiesReadService(
+                        resources.session_factory,
+                        bot_profile_control,
+                        guild_id=web_settings.discord_guild_id,
+                    )
+                )
+                capabilities_mutation_service = (
+                    capabilities_mutation_service_factory(
+                        resources.session_factory, web_settings
+                    )
+                    if capabilities_mutation_service_factory is not None
+                    else WebAdminCapabilityPolicyMutationService(
+                        resources.session_factory,
+                        guild_id=web_settings.discord_guild_id,
+                    )
+                )
                 dashboard_service = (
                     dashboard_service_factory(
                         resources.session_factory,
@@ -1228,6 +1267,8 @@ def create_app(
                     "administrator_service": administrator_service,
                     "audit_log_service": audit_log_service,
                     "server_settings_read_service": server_settings_read_service,
+                    "capabilities_read_service": capabilities_read_service,
+                    "capabilities_mutation_service": capabilities_mutation_service,
                     "oauth_client": oauth_client,
                     "bot_profile_control": bot_profile_control,
                     "oauth_transactions": transactions,
@@ -1256,6 +1297,18 @@ def create_app(
                 name="admin-logout",
             ),
             Route("/admin/", admin_home, methods=["GET"], name="admin-home"),
+            Route(
+                "/admin/capabilities",
+                admin_capabilities,
+                methods=["GET"],
+                name="admin-capabilities",
+            ),
+            Route(
+                "/admin/capabilities",
+                admin_capabilities_update,
+                methods=["POST"],
+                name="admin-capabilities-update",
+            ),
             Route(
                 "/admin/analytics",
                 admin_analytics,

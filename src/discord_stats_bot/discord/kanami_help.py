@@ -45,6 +45,7 @@ def build_kanami_help_embed() -> discord.Embed:
         value=(
             "`/health` — приватная read-only диагностика Kanami "
             "для участников с правом «Управлять сервером».\n"
+            "`/move` — переместить участника при наличии права Kanami.\n"
             "`/rules-status` — версия правил и число принявших для администраторов."
         ),
         inline=False,

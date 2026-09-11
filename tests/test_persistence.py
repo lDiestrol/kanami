@@ -29,6 +29,7 @@ RULES_REVISION = "b6e2c8f91a47"
 RULES_PUBLICATION_REVISION = "e1a7c4d92b60"
 RULES_COMPLIANCE_REVISION = "a4f6c8d21e73"
 MEMBER_AVATAR_REVISION = "d4e8a1c7b962"
+CAPABILITIES_REVISION = "5c8e2a7d9f31"
 
 
 def make_settings() -> Settings:
@@ -91,6 +92,8 @@ def test_base_metadata_contains_business_tables() -> None:
         "daily_text_activity",
         "discord_users",
         "guild_members",
+        "guild_capability_grants",
+        "guild_capability_policies",
         "guild_server_settings",
         "game_sessions",
         "operational_health_observations",
@@ -113,6 +116,7 @@ def test_alembic_configuration_has_no_stored_database_url() -> None:
     assert Path(script_directory.dir).resolve() == Path("migrations").resolve()
     revisions = list(script_directory.walk_revisions())
     assert [revision.revision for revision in revisions] == [
+        CAPABILITIES_REVISION,
         MEMBER_AVATAR_REVISION,
         RULES_COMPLIANCE_REVISION,
         RULES_PUBLICATION_REVISION,
@@ -129,21 +133,22 @@ def test_alembic_configuration_has_no_stored_database_url() -> None:
         AUDIT_REVISION,
         INITIAL_REVISION,
     ]
-    assert revisions[0].down_revision == RULES_COMPLIANCE_REVISION
-    assert revisions[1].down_revision == RULES_PUBLICATION_REVISION
-    assert revisions[2].down_revision == RULES_REVISION
-    assert revisions[3].down_revision == OPERATIONAL_HEALTH_REVISION
-    assert revisions[4].down_revision == GAME_TRACKING_REVISION
-    assert revisions[5].down_revision == SERVER_SETTINGS_REVISION
-    assert revisions[6].down_revision == WEB_ADMIN_ACCESS_REVISION
-    assert revisions[7].down_revision == DISCORD_IDENTITY_REVISION
-    assert revisions[8].down_revision == MEMBER_RETURN_REVISION
-    assert revisions[9].down_revision == ANNIVERSARY_REVISION
-    assert revisions[10].down_revision == ACHIEVEMENTS_REVISION
-    assert revisions[11].down_revision == TEXT_ACTIVITY_REVISION
-    assert revisions[12].down_revision == AUDIT_REVISION
-    assert revisions[13].down_revision == INITIAL_REVISION
-    assert revisions[14].down_revision is None
+    assert revisions[0].down_revision == MEMBER_AVATAR_REVISION
+    assert revisions[1].down_revision == RULES_COMPLIANCE_REVISION
+    assert revisions[2].down_revision == RULES_PUBLICATION_REVISION
+    assert revisions[3].down_revision == RULES_REVISION
+    assert revisions[4].down_revision == OPERATIONAL_HEALTH_REVISION
+    assert revisions[5].down_revision == GAME_TRACKING_REVISION
+    assert revisions[6].down_revision == SERVER_SETTINGS_REVISION
+    assert revisions[7].down_revision == WEB_ADMIN_ACCESS_REVISION
+    assert revisions[8].down_revision == DISCORD_IDENTITY_REVISION
+    assert revisions[9].down_revision == MEMBER_RETURN_REVISION
+    assert revisions[10].down_revision == ANNIVERSARY_REVISION
+    assert revisions[11].down_revision == ACHIEVEMENTS_REVISION
+    assert revisions[12].down_revision == TEXT_ACTIVITY_REVISION
+    assert revisions[13].down_revision == AUDIT_REVISION
+    assert revisions[14].down_revision == INITIAL_REVISION
+    assert revisions[15].down_revision is None
 
 
 def test_alembic_env_uses_base_metadata() -> None:

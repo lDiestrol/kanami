@@ -206,6 +206,12 @@ pre {
 }
 .card, .panel, .integrity, .history-section { padding: 18px; }
 .card { margin: 14px 0; }
+.capability-card { max-width: 860px; }
+.capability-card h3 { margin: 0 0 8px; font-size: 0.9rem; }
+.capability-grant-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 18px; }
+.capability-grants { margin: 0; padding: 0; list-style: none; }
+.capability-grants li { display: grid; gap: 2px; padding: 9px 0; border-bottom: 1px solid var(--border-subtle); }
+.capability-grants small, .capability-key { color: var(--text-muted); font-size: 0.72rem; }
 .card > :first-child, .panel > :first-child { margin-top: 0; }
 .card > :last-child, .panel > :last-child { margin-bottom: 0; }
 .card-accent { border-color: rgba(139, 92, 246, 0.4); box-shadow: var(--shadow-neon-soft); }
@@ -798,6 +804,7 @@ details.availability-details summary:hover { color: var(--text-primary); }
   .analytics-kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .server-game-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .analytics-rankings { grid-template-columns: 1fr; }
+  .capability-grant-columns { grid-template-columns: 1fr; gap: 12px; }
   .member-profile-action { grid-column: 1 / -1; grid-row: auto; width: 100%; }
 }
 @media (min-width: 1200px) {
@@ -912,6 +919,7 @@ _NAVIGATION = (
             ("/admin/members", "Участники"),
             ("/admin/analytics", "Analytics"),
             ("/admin/games", "Игры"),
+            ("/admin/capabilities", "Capabilities"),
             ("/admin/server-settings", "Настройки сервера"),
             ("/admin/rules", "Правила"),
         ),

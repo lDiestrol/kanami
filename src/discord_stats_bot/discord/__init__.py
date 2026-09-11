@@ -16,6 +16,9 @@ from discord_stats_bot.discord.bot_control import (
     DiscordBotProfileService,
     create_bot_control_app,
 )
+from discord_stats_bot.discord.capability_presentation import (
+    DiscordCapabilityPresentationService,
+)
 from discord_stats_bot.discord.game_statistics import (
     GAME_PERIOD_LABELS,
     GameStatisticsCommandHandler,
@@ -98,6 +101,7 @@ from discord_stats_bot.discord.voice_leaderboard import (
     VoiceLeaderboardCommandHandler,
     build_voice_leaderboard_embed,
 )
+from discord_stats_bot.discord.voice_move import VoiceMoveCommandHandler
 from discord_stats_bot.discord.voice_server_stats import (
     VoiceServerStatisticsCommandHandler,
     build_voice_server_statistics_embed,
@@ -127,6 +131,7 @@ __all__ = [
     "DiscordStatsClient",
     "DiscordBotProfileService",
     "DiscordServerSettingsOptionsService",
+    "DiscordCapabilityPresentationService",
     "DatabaseHealth",
     "GuildReferenceProvisioner",
     "GuildReferenceProvisioningSummary",
@@ -160,6 +165,7 @@ __all__ = [
     "VoiceServerStatisticsCommandHandler",
     "VoiceStatisticsCommandHandler",
     "VoiceTogetherCommandHandler",
+    "VoiceMoveCommandHandler",
     "VoiceActivityCommandHandler",
     "ACTIVITY_PERIOD_LABELS",
     "build_voice_statistics_embed",

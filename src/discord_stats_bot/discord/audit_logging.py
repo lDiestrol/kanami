@@ -690,6 +690,7 @@ _TITLES = {
     "role.updated": "Роль изменена",
     "moderation.banned": "Участник заблокирован",
     "moderation.unbanned": "Участник разблокирован",
+    "moderation.voice_moved": "Участник перемещён Kanami",
 }
 
 
@@ -952,7 +953,10 @@ def build_audit_embed(
                 f"Срок изменён\nБыло: {_safe_text(before)}\nСтало: {_safe_text(after)}"
             )
         embed.add_field(name="Тайм-аут", value=value, inline=False)
-    if record.event_type.startswith("voice."):
+    if (
+        record.event_type.startswith("voice.")
+        or record.event_type == "moderation.voice_moved"
+    ):
         _add_voice_fields(embed, record, report_timezone)
     if record.event_type.startswith("channel."):
         embed.description = _channel_display(record)

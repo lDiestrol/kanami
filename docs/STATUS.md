@@ -2,6 +2,22 @@
 
 ## Текущее состояние проекта
 
+В ветке `feature/voice-move-access` реализованы A1 foundation, A2 Web integration
+управляемых capabilities и A3 runtime `/move`: generic PostgreSQL policies/grants, Discord-независимая
+authorization и audit mutations. Зарегистрирован только `voice.move`, default
+disabled. Web Admin управляет enable/disable policy и ROLE/USER grants через
+существующий A1 service и atomic audit transaction; новые grants валидируются по
+configured-guild Discord cache, USER selector исключает bot accounts, а stale
+persisted ROLE/USER grants остаются revocable без Discord runtime. Disabled policy
+сохраняет grants. A2.5 читает authorization state одним SQL statement snapshot,
+а capability HTTP responses — до EOF с общим ограничением размера.
+`/move` authorizes via `voice.move`, requires caller effective `view_channel` and
+`connect` on source/destination without native Move Members, and validates bot
+effective access. Stage/AFK destination are unsupported and `user_limit` is not
+pre-checked. Successful action audit `moderation.voice_moved` is distinct from
+observed `voice.moved`; новых `.env`-настроек нет. Production
+по-прежнему находится на прежнем состоянии и новую migration ещё не получал.
+
 Созданы Python-каркас, PostgreSQL persistence foundation, async Alembic
 infrastructure, Discord Gateway runtime, voice statistics, суточная Text
 Activity и durable Kanami Audit Logging. Runtime считает сообщения и replies без
@@ -63,6 +79,53 @@ G3B Server Game Analytics объединён с `main` в commit
 smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что уже выполнено
+
+- Реализован generic capability registry и типизированные policy/grant/decision
+  contracts. Authorization использует порядок: disabled → guild owner → user
+  grant → role grant → not granted и не принимает Discord permission bits.
+- Добавлены caller-owned SQLAlchemy repository и migration `5c8e2a7d9f31` от
+  `d4e8a1c7b962` для `guild_capability_policies` и
+  `guild_capability_grants`. Mutations сериализуются существующим PostgreSQL
+  advisory transaction lock pattern и идемпотентны.
+- Capability policy/grant/revoke записывают important history-only audit events
+  существующей подсистемой; no-op mutation audit не создаёт.
+- A2.5 устраняет смешение policy/grants из разных READ COMMITTED snapshots:
+  authorization использует один SELECT без guild lock и без hidden transaction
+  boundaries. Disabled по-прежнему имеет приоритет над owner и любыми grants.
+- Capability Bot Control client читает полный body несколькими chunks с общим
+  лимитом; повреждённый поздний chunk/batch не возвращает partial labels.
+  Unexpected member-options exception логируется, controlled runtime 503 — без
+  traceback noise.
+- Добавлены opt-in PostgreSQL regressions для USER/ROLE authorization race,
+  concurrent identical grant/revoke, обоих порядков grant/revoke и rollback
+  policy/grant/revoke при ошибке audit insert/suppression. Они используют только
+  `TEST_DATABASE_URL` и изолированную schema для нескольких соединений.
+- A2.5 завершён в commit `fb477fd` (`fix(capabilities): harden authorization
+  consistency`). Chat review и независимый read-only Work review завершены;
+  follow-up regression для concurrent enable/disable добавлен.
+- Реальный `tests/test_capability_integration.py` на disposable PostgreSQL 17.10
+  прошёл: 24 passed, 0 skipped. Полный suite с `TEST_DATABASE_URL`: 1504 passed,
+  0 skipped и 39 warnings. `ruff check .`, `ruff format --check .` и
+  `git diff --check` проходят.
+- Online Alembic validation на disposable PostgreSQL 17.10 прошла полностью:
+  clean DB → `d4e8a1c7b962` → upgrade `5c8e2a7d9f31` → downgrade
+  `d4e8a1c7b962` → повторный upgrade `5c8e2a7d9f31`. После финального upgrade
+  `current = 5c8e2a7d9f31 (head)`; создание обеих capability tables и их
+  PK/FK/CHECK constraints проверено.
+- Web Admin `/admin/capabilities` управляет ROLE и USER grants: selector новых
+  grants использует configured-guild cache через Bot Control, USER selector не
+  включает bot accounts. Недоступность Discord runtime блокирует только validation
+  нового grant; persisted stale ROLE/USER grant можно отозвать, а disabled policy
+  не удаляет grants.
+- A2.1 добавляет `/admin/capabilities` для OWNER и managed ADMIN: registry
+  остаётся allowlist отображаемых capabilities, отсутствующая policy row даёт
+  default state, а role/member labels читаются только из configured guild cache
+  через существующий Bot Control boundary. Stale Discord entities не ломают
+  страницу и показаны как unknown с secondary diagnostic ID; Web client
+  дедуплицирует IDs и batch-ит cache lookup до 250 subjects total без partial
+  labels при failure одного batch. Успешно отсутствующие Discord entities
+  отличаются от временно недоступного lookup, который оставляет DB state
+  видимым с degraded warning.
 
 - Реализован G3A Member Game Analytics без нового route, migration и изменений
   Game Tracking collection: отдельный Web Admin service выполняет один
@@ -957,6 +1020,11 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что сейчас делается
 
+A1 foundation и A2 Web policy/ROLE/USER management ранее завершены в
+feature-ветке; A2.5 correctness/hardening завершён отдельным commit `fb477fd`.
+A3 runtime `/move` завершён. Production capability migration `5c8e2a7d9f31`
+ещё не применена.
+
 WUI-4A.1 и оба responsive hotfix развёрнуты в production. Первый hotfix исправил
 расположение compact-кнопки «Профиль» справа в member row на tablet width. Второй
 hotfix `fix/web-nav-900-compact-menu` объединён с `main` в commit `c7781e0`, и
@@ -1115,6 +1183,10 @@ automation, settings/env, migrations и intents для `/health` не добав
 
 ## Известные проблемы
 
+- Duplicate role/member names в selectors остаются неоднозначными; LOW UX finding
+  сознательно отложен за scope A2.5.
+- Production capability migration `5c8e2a7d9f31` ещё не развёрнута.
+
 - Live text ingestion, reply counting и `/topmessages` прошли production smoke;
   полный install/update flow объединённого состояния ещё не проверен на чистой
   Debian 13 VM. Автоматические тесты не подключаются к production
@@ -1124,10 +1196,11 @@ automation, settings/env, migrations и intents для `/health` не добав
 - Автоматические годовщины имеют ту же честную at-least-once границу: unique outbox key исключает повторную постановку и обычные restart/reconnect duplicates, но авария после Discord send и до commit `delivered_at` теоретически может повторить сообщение.
 - Для Autorole production требуется `Manage Roles`, а highest role Kanami должна находиться выше configured autorole; production smoke Autorole ещё не выполнен.
 - Локально тестовая БД и `TEST_DATABASE_URL` по-прежнему предоставляются
-  вручную; первый remote GitHub Actions run подтвердил полный suite с disposable
-  PostgreSQL 17 без skipped integration tests. Online Alembic migration
-  smoke-test в workflow по-прежнему не входит; существующие 27 warnings не
-  исправлялись.
+  вручную; remote GitHub Actions run подтвердил полный suite с disposable
+  PostgreSQL 17 без skipped integration tests. Локальный online Alembic
+  round-trip на disposable PostgreSQL 17.10 пройден; migration smoke-test в
+  GitHub Actions workflow по-прежнему не входит. Существующие warnings отдельно
+  не исправлялись.
 - Автоматическая backup/restore policy и полноценный production health monitoring пока не реализованы; operator обязан отдельно защищать PostgreSQL data.
 - Текущее состояние Operations использует факты Web Admin/Bot Control, а W1.3
   history — отдельные bot-owned sampled observations. Gateway latency не
@@ -1154,6 +1227,10 @@ automation, settings/env, migrations и intents для `/health` не добав
   vanilla Caddy требует external edge/firewall для login/callback rate limiting.
 
 ## Важные принятые решения
+
+- Capability authorization читает policy и matching grants из одного SQL statement
+  snapshot. Per-guild advisory transaction lock используется только mutations;
+  caller сохраняет управление transaction, mutation и audit атомарны.
 
 - G3A не создаёт второй алгоритм игровой статистики: Web Admin read-side
   переиспользует `GameStatisticsService`, его timezone/canonicalization semantics
@@ -1282,6 +1359,13 @@ automation, settings/env, migrations и intents для `/health` не добав
 - Discord identity хранит только исходные mutable поля: глобальные username/global name/avatar hash в `discord_users` и guild nickname/avatar hash в `guild_members`; display name вычисляется при чтении, image bytes и identity/avatar history не сохраняются. Full Member может достоверно записать nullable guild identity, partial User обновляет global identity, но не очищает guild-specific поля.
 
 ## Следующие шаги
+
+- A3 `/move` завершён: `voice.move`, caller/bot ACL, bounded source revalidation,
+  controlled Discord errors и отдельный important action audit реализованы.
+  Caller native Move Members не требуется; Stage/AFK destination не поддержаны,
+  а destination `user_limit` намеренно не pre-check-ится.
+- Production deployment capability migration `5c8e2a7d9f31` остаётся отдельным
+  deployment step и ещё не выполнен.
 
 1. При следующем реальном этапе Rules Compliance / reacceptance проверить
    оставшийся production scenario: Publish новой Rules version → успешный DB
