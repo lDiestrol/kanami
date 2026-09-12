@@ -6,6 +6,9 @@ from discord_stats_bot.persistence.repositories.achievements import (
 from discord_stats_bot.persistence.repositories.audit_events import (
     SqlAlchemyAuditEventRepository,
 )
+from discord_stats_bot.persistence.repositories.capabilities import (
+    SqlAlchemyCapabilityRepository,
+)
 from discord_stats_bot.persistence.repositories.game_tracking import (
     SqlAlchemyGameTrackingRepository,
 )
@@ -53,6 +56,7 @@ from discord_stats_bot.persistence.repositories.web_admin_access import (
 
 __all__ = [
     "SqlAlchemyAuditEventRepository",
+    "SqlAlchemyCapabilityRepository",
     "SqlAlchemyGameTrackingRepository",
     "SqlAlchemyServerGameStatisticsRepository",
     "SqlAlchemyAchievementRepository",

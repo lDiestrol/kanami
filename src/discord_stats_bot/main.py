@@ -15,6 +15,7 @@ from discord_stats_bot.discord import (
     AutoroleHandler,
     BotControlServer,
     DiscordBotProfileService,
+    DiscordCapabilityPresentationService,
     DiscordServerSettingsOptionsService,
     DiscordStatsClient,
     GameCheckpointRunner,
@@ -37,6 +38,7 @@ from discord_stats_bot.discord import (
     VoiceChannelStatisticsCommandHandler,
     VoiceCheckpointRunner,
     VoiceLeaderboardCommandHandler,
+    VoiceMoveCommandHandler,
     VoiceServerStatisticsCommandHandler,
     VoiceStartupReconciler,
     VoiceStateEventHandler,
@@ -120,6 +122,10 @@ def _create_bot_control_server(
             wake_runtime=wake_delivery,
         ),
         server_settings_options_operator=DiscordServerSettingsOptionsService(
+            client,
+            guild_id=settings.discord_guild_id,
+        ),
+        capability_presentation_subjects_operator=DiscordCapabilityPresentationService(
             client,
             guild_id=settings.discord_guild_id,
         ),
@@ -310,6 +316,11 @@ async def run_application(settings: Settings) -> None:
         min_session_seconds=settings.voice_min_session_seconds,
         settings_provider=server_settings_provider,
     )
+    voice_move_command_handler = VoiceMoveCommandHandler(
+        resources.session_factory,
+        guild_id=settings.discord_guild_id,
+        wake_delivery=audit_delivery_runner.wake,
+    )
     member_anniversary_check_runner = MemberAnniversaryCheckRunner(
         resources.session_factory,
         guild_id=settings.discord_guild_id,
@@ -349,6 +360,7 @@ async def run_application(settings: Settings) -> None:
             voice_server_statistics_command_handler
         ),
         voice_activity_command_handler=voice_activity_command_handler,
+        voice_move_command_handler=voice_move_command_handler,
         game_statistics_command_handler=game_statistics_command_handler,
         achievements_command_handler=achievements_command_handler,
         member_profile_command_handler=member_profile_command_handler,

@@ -704,7 +704,29 @@ def test_web_database_grants_are_explicit_and_least_privilege() -> None:
     assert "GRANT USAGE ON SCHEMA public" in grants
     assert "GRANT TEMPORARY" not in grants
     assert "GRANT INSERT, UPDATE, DELETE ON TABLE rulesets" in grants
-    assert "GRANT INSERT ON TABLE audit_events" in grants
+    assert "grant insert on table audit_events" in grants.lower()
+    normalized_grants = grants.lower()
+    assert "guild_capability_policies" in normalized_grants
+    assert "guild_capability_grants" in normalized_grants
+    assert (
+        "grant insert, update on table guild_capability_policies "
+        "to kanami_web_readonly;" in normalized_grants
+    )
+    assert (
+        "grant insert, delete on table guild_capability_grants "
+        "to kanami_web_readonly;" in normalized_grants
+    )
+    assert (
+        "grant update (\n"
+        "    discord_message_id,\n"
+        "    delivered_at,\n"
+        "    next_delivery_attempt_at,\n"
+        "    last_delivery_error\n"
+        ") on table audit_events to kanami_web_readonly;" in normalized_grants
+    )
+    assert "grant update on table audit_events" not in normalized_grants
+    assert "grant delete on table guild_capability_policies" not in normalized_grants
+    assert "grant update on table guild_capability_grants" not in normalized_grants
     assert "rulesets_id_seq, audit_events_id_seq" in grants
     assert "operational_health_observations" in grants
     assert "GRANT INSERT ON TABLE operational_health_observations" not in grants

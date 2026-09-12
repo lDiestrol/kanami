@@ -49,8 +49,8 @@ Achievements
 доступны пользователям через guild-only `/achievements` с актуализацией
 voice/community метрик и идемпотентной выдачей. Pagination не реализована.
 
-Текущее подтверждённое production-состояние работает на commit `1e73c8a`:
-PostgreSQL Alembic `current = heads = d4e8a1c7b962`,
+Текущее подтверждённое production-состояние работает на commit `4461258`:
+PostgreSQL Alembic `current = heads = 5c8e2a7d9f31`,
 `kanami.service` и `kanami-web-admin.service` active. Bot Control работает только
 на loopback `127.0.0.1:8765`, а Web Admin сохраняет существующую private-bind +
 reverse-proxy архитектуру. Rules v1, Web Admin Rules v1, Rules Publication v1 и
@@ -66,6 +66,14 @@ G3B Server Game Analytics объединён с `main` в commit
 `1e73c8a feat(web): add server game analytics`, развёрнут на production-host и
 31.08.2026 прошёл authenticated production browser/server/database/responsive
 smoke; G3B marked merged, deployed и production-smoke-verified.
+
+A1/A2/A2.5/A3 capability-controlled `/move` объединены с `main` в commit
+`4461258`, развёрнуты на production-host и production-validated. Migration
+`5c8e2a7d9f31` применена; Web Admin capability enable/grant и Discord `/move`
+успешно прошли production smoke. Production Web Admin получил минимальные
+scoped PostgreSQL privileges для capability mutations и delivery-state audit
+updates без `GRANT ALL`.
+
 
 ## Что уже выполнено
 
@@ -1115,12 +1123,15 @@ smoke; G3B marked merged, deployed и production-smoke-verified.
 
 ## Что сейчас делается
 
-D2.13 security-review blockers исправлены в рабочем дереве; реализация
-остановлена для повторного ручного security review. D2.12 остаётся default-safe installation foundation без
-auto-publish; D2.13 является отдельным explicit completion после public DNS.
-Реальный clean Debian 13 VM smoke package/mask/failure cleanup, automatic TLS,
-Bot Control/Web readiness и browser OAuth/write checklist ещё не выполнялся и
-не подменяется Windows hermetic tests.
+D2.13 остаётся текущим активным installation/lifecycle этапом. В candidate
+`feature/installer-v2` интегрирован актуальный `main` с capability migration и
+runtime `/move`; canonical `kanami-web-admin-grants.sql` расширен scoped
+SELECT/INSERT/UPDATE/DELETE правами для capability tables и только четырьмя
+delivery-state UPDATE columns `audit_events`, а `scripts/update.sh` исправлен
+на executable mode. Объединённый Windows regression прошёл: 1556 passed,
+353 skipped, 39 dependency warnings; Ruff lint/format и `git diff --check`
+проходят. Linux/Bash helper tests и реальный clean Debian 13 VM smoke остаются
+обязательными перед завершением D2.13 и не подменяются Windows-проверками.
 
 WUI-4A.1 и оба responsive hotfix развёрнуты в production. Первый hotfix исправил
 расположение compact-кнопки «Профиль» справа в member row на tablet width. Второй
@@ -1496,11 +1507,13 @@ automation, settings/env, migrations и intents для `/health` не добав
 
 ## Следующие шаги
 
-1. Провести ручной security review D2.13, затем отдельный clean Debian 13 VM
-   smoke: cancellation/no-mutation, package first-start suppression и cleanup,
-   new/idempotent pairing, systemd ordering, local Control/Web health, public
-   automatic TLS и browser OAuth/OWNER/read/write checklist. Проверить failure
-   injection после каждого mutation stage и manual-inspection diagnostics.
+1. Провести clean Debian 13 VM smoke актуального объединённого D2.13 candidate:
+   Linux/Bash regression suite, cancellation/no-mutation, package first-start
+   suppression и cleanup, new/idempotent pairing, systemd ordering, local
+   Control/Web health, public automatic TLS и browser OAuth/OWNER/read/write
+   checklist. Проверить failure injection после каждого mutation stage,
+   manual-inspection diagnostics и capability Web Admin enable/grant/revoke +
+   `/move`, чтобы подтвердить canonical PostgreSQL ACL на чистой машине.
 2. При следующем реальном этапе Rules Compliance / reacceptance проверить
    оставшийся production scenario: Publish новой Rules version → успешный DB
    commit → automatic Bot Control sync → обновление существующего managed message

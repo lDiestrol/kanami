@@ -6,6 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from discord_stats_bot.config import Settings
+from discord_stats_bot.features.capabilities import VOICE_MOVE, CapabilitySubjectType
 from discord_stats_bot.features.member_returns import MemberReturnEvent
 from discord_stats_bot.features.reference_data import (
     DiscordUserSnapshot,
@@ -28,12 +29,113 @@ from discord_stats_bot.features.voice_statistics import (
 from discord_stats_bot.persistence.database import create_database_resources
 from discord_stats_bot.persistence.repositories import (
     SqlAlchemyAchievementRepository,
+    SqlAlchemyCapabilityRepository,
     SqlAlchemyGuildServerSettingsRepository,
     SqlAlchemyMemberReturnRepository,
     SqlAlchemyReferenceDataRepository,
     SqlAlchemyRulesRepository,
     SqlAlchemyVoiceStatisticsRepository,
 )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_capability_repository_postgresql_round_trip() -> None:
+    test_database_url = os.getenv("TEST_DATABASE_URL")
+    if not test_database_url:
+        pytest.skip("TEST_DATABASE_URL is not set")
+
+    settings = Settings(
+        _env_file=None,
+        DISCORD_TOKEN="integration-test-placeholder",
+        DISCORD_GUILD_ID=1,
+        DATABASE_URL=test_database_url,
+    )
+    resources = create_database_resources(settings)
+    occurred_at = datetime(2026, 9, 7, 12, tzinfo=UTC)
+    try:
+        async with resources.engine.connect() as connection:
+            transaction = await connection.begin()
+            try:
+                await connection.execute(
+                    text(
+                        "CREATE TEMP TABLE guild_capability_policies ("
+                        "guild_id BIGINT NOT NULL, capability_key TEXT NOT NULL, "
+                        "enabled BOOLEAN NOT NULL, updated_at TIMESTAMPTZ NOT NULL, "
+                        "updated_by_user_id BIGINT NOT NULL, "
+                        "PRIMARY KEY (guild_id, capability_key))"
+                    )
+                )
+                await connection.execute(
+                    text(
+                        "CREATE TEMP TABLE guild_capability_grants ("
+                        "guild_id BIGINT NOT NULL, capability_key TEXT NOT NULL, "
+                        "subject_type TEXT NOT NULL, subject_id BIGINT NOT NULL, "
+                        "created_at TIMESTAMPTZ NOT NULL, "
+                        "created_by_user_id BIGINT NOT NULL, "
+                        "PRIMARY KEY (guild_id, capability_key, subject_type, subject_id))"
+                    )
+                )
+                session = AsyncSession(bind=connection, expire_on_commit=False)
+                try:
+                    repository = SqlAlchemyCapabilityRepository(session)
+                    assert await repository.get_policy(10, VOICE_MOVE) is None
+                    policy = await repository.set_policy(
+                        guild_id=10,
+                        capability=VOICE_MOVE,
+                        enabled=True,
+                        updated_at=occurred_at,
+                        updated_by_user_id=20,
+                    )
+                    assert policy.enabled is True
+                    assert (await repository.get_policy(10, VOICE_MOVE)) == policy
+
+                    user = await repository.add_grant(
+                        guild_id=10,
+                        capability=VOICE_MOVE,
+                        subject_type=CapabilitySubjectType.USER,
+                        subject_id=30,
+                        created_at=occurred_at,
+                        created_by_user_id=20,
+                    )
+                    role = await repository.add_grant(
+                        guild_id=10,
+                        capability=VOICE_MOVE,
+                        subject_type=CapabilitySubjectType.ROLE,
+                        subject_id=40,
+                        created_at=occurred_at,
+                        created_by_user_id=20,
+                    )
+                    duplicate = await repository.add_grant(
+                        guild_id=10,
+                        capability=VOICE_MOVE,
+                        subject_type=CapabilitySubjectType.USER,
+                        subject_id=30,
+                        created_at=occurred_at,
+                        created_by_user_id=20,
+                    )
+                    assert user is not None and role is not None and duplicate is None
+                    assert await repository.has_user_grant(10, VOICE_MOVE, 30)
+                    assert await repository.has_any_role_grant(10, VOICE_MOVE, (39, 40))
+                    assert len(await repository.list_grants(10, VOICE_MOVE)) == 2
+                    assert await repository.remove_grant(
+                        guild_id=10,
+                        capability=VOICE_MOVE,
+                        subject_type=CapabilitySubjectType.USER,
+                        subject_id=30,
+                    )
+                    assert not await repository.remove_grant(
+                        guild_id=10,
+                        capability=VOICE_MOVE,
+                        subject_type=CapabilitySubjectType.USER,
+                        subject_id=30,
+                    )
+                finally:
+                    await session.close()
+            finally:
+                await transaction.rollback()
+    finally:
+        await resources.dispose()
 
 
 @pytest.mark.integration

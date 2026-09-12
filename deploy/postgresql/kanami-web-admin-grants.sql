@@ -21,10 +21,20 @@ GRANT SELECT ON TABLE
     rule_acceptances,
     guild_server_settings,
     game_sessions,
-    operational_health_observations
+    operational_health_observations,
+    guild_capability_policies,
+    guild_capability_grants
 TO kanami_web_readonly;
 
 GRANT INSERT, UPDATE, DELETE ON TABLE rulesets TO kanami_web_readonly;
 GRANT INSERT ON TABLE audit_events TO kanami_web_readonly;
+GRANT INSERT, UPDATE ON TABLE guild_capability_policies TO kanami_web_readonly;
+GRANT INSERT, DELETE ON TABLE guild_capability_grants TO kanami_web_readonly;
+GRANT UPDATE (
+    discord_message_id,
+    delivered_at,
+    next_delivery_attempt_at,
+    last_delivery_error
+) ON TABLE audit_events TO kanami_web_readonly;
 GRANT USAGE, SELECT ON SEQUENCE rulesets_id_seq, audit_events_id_seq
 TO kanami_web_readonly;
