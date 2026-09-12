@@ -224,10 +224,13 @@ sync_web_runtime() {
 
 configure_web_git_metadata() {
     log "Configuring read-only Git metadata access for ${WEB_SERVICE_USER}"
-    runuser -u "${WEB_SERVICE_USER}" -- env HOME="${WEB_SERVICE_HOME}" \
-        git config --global --add safe.directory "${INSTALL_DIR}"
-    runuser -u "${WEB_SERVICE_USER}" -- env HOME="${WEB_SERVICE_HOME}" \
-        git -C "${INSTALL_DIR}" rev-parse --short HEAD >/dev/null
+    (
+        cd -- "${WEB_SERVICE_HOME}"
+        runuser -u "${WEB_SERVICE_USER}" -- env HOME="${WEB_SERVICE_HOME}" \
+            git config --global --add safe.directory "${INSTALL_DIR}"
+        runuser -u "${WEB_SERVICE_USER}" -- env HOME="${WEB_SERVICE_HOME}" \
+            git -C "${INSTALL_DIR}" rev-parse --short HEAD >/dev/null
+    )
 }
 
 apply_web_database_grants() {

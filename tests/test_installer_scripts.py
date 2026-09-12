@@ -685,10 +685,39 @@ def test_web_runtime_is_separate_and_checkout_trust_is_preserved() -> None:
     assert '"${WEB_UV_BOOTSTRAP_DIR}/bin/uv" sync' in sync_runtime
     assert "--active --frozen --no-dev" in sync_runtime
     assert 'runuser -u "${WEB_SERVICE_USER}"' in sync_runtime
+    assert 'cd -- "${WEB_SERVICE_HOME}"' in git_metadata
+    assert git_metadata.index('cd -- "${WEB_SERVICE_HOME}"') < git_metadata.index(
+        'runuser -u "${WEB_SERVICE_USER}"'
+    )
     assert 'safe.directory "${INSTALL_DIR}"' in git_metadata
     assert "safe.directory=*" not in git_metadata
     assert 'usermod -a -G "${SERVICE_USER}"' not in source
     assert 'chown -R "${WEB_SERVICE_USER}" "${INSTALL_DIR}"' not in source
+
+
+def test_web_git_metadata_uses_web_home_as_cwd(
+    tmp_path: Path, run_bash: BashRunner
+) -> None:
+    function = installer_function(installer_source(), "configure_web_git_metadata")
+    web_home = tmp_path / "web-home"
+    web_home.mkdir()
+    result = run_bash(
+        textwrap.dedent(
+            f"""
+            readonly WEB_SERVICE_USER="kanami-web"
+            readonly WEB_SERVICE_HOME={shlex_quote(web_home.as_posix())}
+            readonly INSTALL_DIR="/opt/kanami"
+            log() {{ :; }}
+            runuser() {{ printf '%s\\n' "$PWD"; }}
+            {function}
+            cd /
+            configure_web_git_metadata
+            """
+        )
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.splitlines() == [web_home.as_posix(), web_home.as_posix()]
 
 
 def test_web_database_grants_are_explicit_and_least_privilege() -> None:
