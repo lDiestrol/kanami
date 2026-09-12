@@ -61,7 +61,7 @@ Discord permission bits. A3 требует от вызывающего effective
 `user_limit` намеренно не pre-check-ится. Успешное действие сохраняется как
 important `moderation.voice_moved`, отдельно от наблюдаемого `voice.moved`.
 Новых `.env`-настроек нет; production deployment capability migration
-`5c8e2a7d9f31` ещё не выполнен.
+`5c8e2a7d9f31` применена и production-validated.
 
 A2.1 добавляет только authenticated read-only Web Admin presentation
 registry definitions и текущих policy/grants. Web слой материализует исключительно
