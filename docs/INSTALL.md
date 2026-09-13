@@ -1,5 +1,13 @@
 # Установка Kanami
 
+> **Transitional D2.12/D2.13 flow.** Эта инструкция остаётся действующим
+> reference для текущих installations и сохранённых security invariants, но не
+> описывает target architecture будущего Web Setup. D2.13 superseded by Web
+> Setup redesign; целевая модель зафиксирована в
+> [ADR 0001](adr/0001-installation-lifecycle-v2.md). Команда
+> `sudo kanami web-setup` ниже является transitional operation, а не конечным
+> будущим setup UX или API.
+
 Эта инструкция описывает первый официальный deployment-путь: чистая Debian 13
 VM, `systemd` и локальный PostgreSQL. Предполагаются базовые навыки Linux и
 доступ `sudo`.

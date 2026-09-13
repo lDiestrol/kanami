@@ -65,8 +65,10 @@ optional Game Tracking при `GAME_TRACKING_ENABLED=true`; typing и DM trackin
    sudo ./scripts/install.sh
    ```
 
-3. Заполните `DISCORD_TOKEN` и `DISCORD_GUILD_ID` в
-   `/etc/kanami/kanami.env`:
+3. Transitional installer интерактивно запрашивает `DISCORD_TOKEN`,
+   `DISCORD_GUILD_ID` и `REPORT_TIMEZONE`, генерирует PostgreSQL password и
+   записывает готовый `/etc/kanami/kanami.env`. При необходимости настройте в
+   нём только optional параметры:
 
    ```bash
    sudoedit /etc/kanami/kanami.env
@@ -83,8 +85,10 @@ optional Game Tracking при `GAME_TRACKING_ENABLED=true`; typing и DM trackin
    ```
 
 Installer создаёт локальную PostgreSQL role/database, применяет Alembic
-migrations и устанавливает unit, но намеренно не запускает бота с пустыми
-Discord credentials.
+migrations и устанавливает unit, но намеренно не запускает бота автоматически.
+Эти D2.12/D2.13 инструкции остаются transitional flow; целевая Web Setup
+архитектура описана в
+[ADR 0001](docs/adr/0001-installation-lifecycle-v2.md).
 
 ## Настройка Discord
 
@@ -260,9 +264,10 @@ credentials/drop-ins: bot-side конфигурация содержит Bot tok
 `VOICE_CHECKPOINT_INTERVAL_SECONDS`, `GAME_TRACKING_ENABLED` и
 `GAME_CONFIRM_INTERVAL_SECONDS`. Tracking settings нужны
 Web Admin только для честного отображения `/admin/system`; tracker запускает
-только bot service. Текущий installer отдельный Web Admin unit и это разделение
-автоматически не создаёт. Рекомендуемый отдельный Linux user `kanami-web` не
-должен иметь доступа к `/etc/kanami/kanami.env`. Для Git metadata этому user
+только bot service. Transitional D2.12 installer при явном Web Admin opt-in
+создаёт отдельные `kanami-web`, runtime, protected env и unit, но не публикует и
+не запускает Web Admin автоматически. `kanami-web` не должен иметь доступа к
+`/etc/kanami/kanami.env`. Для Git metadata этому user
 нужно разрешить только `safe.directory=/opt/kanami`; точные команды приведены в
 [deployment guide](docs/WEB_ADMIN_DEPLOYMENT.md#git-metadata-при-раздельных-service-users).
 
@@ -294,10 +299,12 @@ server-event collectors не реализованы. `RAW_MESSAGE_RETENTION_DAYS
 Для экземпляра, установленного installer-ом:
 
 ```bash
-sudo /opt/kanami/scripts/update.sh
+sudo kanami update
 ```
 
-Скрипт останавливается при локальных изменениях, выполняет только
+Canonical Manager проверяет bootstrap trust и запускает trusted
+`/opt/kanami/scripts/update.sh`. Updater останавливается при локальных
+изменениях, выполняет только
 `git pull --ff-only`, синхронизирует locked dependencies, применяет миграции,
 обновляет systemd unit и перезапускает service. Он не использует forced checkout
 или `git reset --hard`. Installer сохраняет branch и `origin` исходного

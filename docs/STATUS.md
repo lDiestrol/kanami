@@ -2,6 +2,22 @@
 
 ## Текущее состояние проекта
 
+Активный этап: **D2.14 Architecture Baseline** (docs only).
+
+| Baseline | Значение |
+| --- | --- |
+| Branch | `feature/installer-v2` |
+| Commit | `e6655758de7948f856bb8c95e4243eb7fbedec07` |
+| Windows | 1556 passed, 354 skipped, 39 warnings |
+| Debian 13 | 1864 passed, 46 skipped, 39 warnings |
+| Static | Ruff PASS, `ruff format --check` PASS, `git diff --check` PASS |
+
+D2.13 зафиксирован как **transitional prototype — superseded by Web Setup
+redesign**. Его scripts и security tests пока сохраняются как рабочий reference,
+но старый interactive/root-shell clean-install UX больше не является текущим
+направлением. D2.14 только документирует target architecture и не меняет
+установленные hosts; implementation D2.15 ещё не начата.
+
 Созданы Python-каркас, PostgreSQL persistence foundation, async Alembic
 infrastructure, Discord Gateway runtime, voice statistics, суточная Text
 Activity и durable Kanami Audit Logging. Runtime считает сообщения и replies без
@@ -40,9 +56,9 @@ Server Settings UI объединён с `main`, развёрнут на product
 production-validated. Stage 6B.3 UX/audit polish объединён с `main`, развёрнут
 на production-host и production-validated. Подготовлены
 человекочитаемая русская документация и первый официальный deployment flow для
-Debian 13 + systemd + локальный PostgreSQL. Начат D2 — Installation & Lifecycle
-v2: новая официальная установка добавляет `/usr/local/bin/kanami`, штатный
-updater refresh-ит его после pull, а Kanami Manager поддерживает read-only
+Debian 13 + systemd + локальный PostgreSQL. Действующая transitional реализация
+D2.12/D2.13 добавляет `/usr/local/bin/kanami`, штатный updater refresh-ит его
+после pull, а Kanami Manager поддерживает read-only
 `help`, `version`, `status`, `doctor`, `logs`, lifecycle start/stop/restart и
 trusted wrapper `update`.
 Achievements
@@ -128,7 +144,8 @@ updates без `GRANT ALL`.
   D2.13/Manager/installer/updater/template regression содержит 352 passed и 17
   skipped. Полный suite с Git Bash содержит 1710 passed, 33 skipped без части
   Unix semantics/`TEST_DATABASE_URL` и 39 существующих discord.py warnings.
-  Clean Debian 13 activation smoke не выполнялся.
+  Clean Debian 13 activation smoke тогда не выполнялся; после superseding D2.13
+  это historical gap, а не текущий следующий шаг.
 - D2.12: optional Web Admin wizard сохраняет default Core-only flow и до общего
   confirmation собирает OAuth Client ID, hidden safe Client Secret, exact HTTPS
   callback и canonical OWNER IDs. Opt-in provisioning создаёт отдельные
@@ -150,7 +167,7 @@ updates без `GRANT ALL`.
   содержит 1472 passed, 169 skipped без Unix
   semantics/`TEST_DATABASE_URL` и 39 существующих discord.py warnings. Ruff
   lint/format, `git diff --check` и реальный Git Bash syntax check трёх scripts
-  проходят; clean Debian 13 VM smoke остаётся невыполненным.
+  проходят.
 - D2.11: installer заменил обязательные Discord placeholders безопасным
   interactive core wizard через `/dev/tty`. Bot Token читается hidden и не
   передаётся через CLI/env или child process; Guild ID проверяется как positive
@@ -1123,15 +1140,19 @@ updates без `GRANT ALL`.
 
 ## Что сейчас делается
 
-D2.13 остаётся текущим активным installation/lifecycle этапом. В candidate
-`feature/installer-v2` интегрирован актуальный `main` с capability migration и
-runtime `/move`; canonical `kanami-web-admin-grants.sql` расширен scoped
-SELECT/INSERT/UPDATE/DELETE правами для capability tables и только четырьмя
-delivery-state UPDATE columns `audit_events`, а `scripts/update.sh` исправлен
-на executable mode. Объединённый Windows regression прошёл: 1556 passed,
-353 skipped, 39 dependency warnings; Ruff lint/format и `git diff --check`
-проходят. Linux/Bash helper tests и реальный clean Debian 13 VM smoke остаются
-обязательными перед завершением D2.13 и не подменяются Windows-проверками.
+D2.14 фиксирует Architecture Baseline в документации: отдельный ADR, trust
+boundaries, typed/versioned root-helper RPC, immutable `InstallPlan`, отдельные
+write-only `SecretInputs`, durable recovery model, exact platform profiles,
+closed `PlatformProvider`/`ManagedProxy` contracts и content-addressed release
+boundary. Целевая Web Setup архитектура отделяется от сохранённого
+D2.12/D2.13 transitional flow. Изменения реализации, provisioning и installed
+hosts в этом этапе отсутствуют.
+
+Независимый review hardening уточнил mandatory secret/config durability
+checkpoint до любой production mutation, минимальное privileged bootstrap
+исключение, root-trusted release catalog, pre-known HTTPS hostname, независимость
+durable operation от browser TTL, полную изоляцию setup identity, fixed Discord
+API/SSRF boundary и обязательные Setup HTTP security headers.
 
 WUI-4A.1 и оба responsive hotfix развёрнуты в production. Первый hotfix исправил
 расположение compact-кнопки «Профиль» справа в member row на tablet width. Второй
@@ -1291,10 +1312,16 @@ automation, settings/env, migrations и intents для `/health` не добав
 
 ## Известные проблемы
 
-- Live text ingestion, reply counting и `/topmessages` прошли production smoke;
-  полный install/update flow объединённого состояния ещё не проверен на чистой
-  Debian 13 VM. Автоматические тесты не подключаются к production
-  Discord/PostgreSQL.
+- Setup control plane и `kanami-setup` identity target flow не реализованы.
+- Root helper protocol, Unix socket и `kanami-installerd` не реализованы.
+- Durable operation/stage journal, global mutation lock и crash/reboot recovery
+  target flow не реализованы.
+- Release lifecycle по-прежнему основан на transitional root-owned Git checkout;
+  immutable release catalog/provider и atomic `current` pointer не реализованы.
+- Ubuntu пока не имеет ни одной officially supported exact profile; Mint,
+  Pop!_OS и иные derivatives target flow обязан отклонять fail closed.
+- Migration path существующей D2.12/D2.13 installation в target architecture не
+  спроектирован.
 - Не определены pagination, дедупликация/коррекция message events и правила opt-out/удаления данных.
 - Audit actor attribution, kick detection, `/history`, category routing и message logging отложены; редкий delivery duplicate возможен в crash-gap между Discord send и DB mark.
 - Автоматические годовщины имеют ту же честную at-least-once границу: unique outbox key исключает повторную постановку и обычные restart/reconnect duplicates, но авария после Discord send и до commit `delivered_at` теоретически может повторить сообщение.
@@ -1309,7 +1336,9 @@ automation, settings/env, migrations и intents для `/health` не добав
   history — отдельные bot-owned sampled observations. Gateway latency не
   симулируется; потерянные при недоступной PostgreSQL samples не считаются
   healthy или unavailable автоматически. Alerting и внешний polling не входят.
-- Installer и updater прошли static syntax review, но ещё не прошли end-to-end smoke на чистой Debian 13 VM; partial failure installer требует ручной диагностики и не затирается повторным запуском.
+- Transitional installer/updater остаются reference до feature и negative-test
+  parity нового flow; их partial failure требует ручной диагностики и не
+  затирается повторным запуском.
 - Message-based achievements, notifications и автоматическая/фоновая выдача
   пока отсутствуют; достижения вычисляются и выдаются только при явном вызове
   `/achievements`.
@@ -1320,18 +1349,63 @@ automation, settings/env, migrations и intents для `/health` не добав
   недоступности БД или ещё не provisioned/stale membership доступ fail-closed.
 - Management UI не предоставляет Discord API search, invite flow, историю
   revoked grants или дополнительные роли; это сознательно вне текущего этапа.
-- D2.13 managed Caddy activation ещё не прошла end-to-end smoke на clean Debian
-  13 VM. До этого package first-start mask cleanup, real systemd ordering,
-  certificate issuance, NAT/public HTTPS и browser OAuth/write path считаются
-  неподтверждёнными production environment facts. Existing/remote proxy
-  deployments остаются manual; control listener нельзя выводить за
-  `127.0.0.1`.
+- Target Managed Caddy mutation ожидает D2.18 durable state и входит только в
+  D2.19. Existing/remote proxy deployments остаются manual; Bot Control нельзя
+  выводить за `127.0.0.1`.
 - Sessions, OAuth transactions и write limiter process-local: restart отзывает
   sessions и очищает limiter; multi-worker deployment без общего session store не
   поддерживается. Reverse proxy network limiting документирован для Nginx, но
   vanilla Caddy требует external edge/firewall для login/callback rate limiting.
 
 ## Важные принятые решения
+
+- Нормативная Installation & Lifecycle v2 архитектура принята в
+  [ADR 0001](adr/0001-installation-lifecycle-v2.md). D2.14 является docs-only
+  gate; D2.15 implementation не начата.
+- Browser-facing `kanami-setup-web` должен быть непривилегированным, а
+  `kanami-installerd` — единственным root boundary без TCP listener. Между ними
+  разрешён только bounded typed/versioned RPC через Unix socket с exact
+  `SO_PEERCRED`; generic root execution API запрещён.
+- Immutable secret-free `InstallPlan` канонизируется RFC 8785/JCS и получает
+  root-side SHA-256 digest. `SecretInputs` передаются отдельно write-only; после
+  confirmation plan не меняется.
+- Operation status, stage status и inspected resource state разделены. Durable
+  state/lock и inspect-first recovery обязательны до Managed Caddy production
+  mutation; `FOREIGN` fail closed, global rollback не обещается.
+- Первый exact supported/tested profile —
+  `debian-13-amd64-systemd-apt-v1`. Ubuntu unsupported до clean-VM acceptance
+  одной exact profile в D2.23; derivatives, unknown distro, non-systemd и
+  неподтверждённые architectures не наследуют поддержку.
+- Target release boundary использует content-addressed `release_id` и verified
+  immutable release. Git checkout/update остаётся transitional; core automatic
+  update по умолчанию выключен, default — notify/manual.
+- Content digest не является publisher authority: helper принимает только
+  `release_id` из root-trusted bundled/fixed-origin catalog и до activation
+  проверяет catalog membership, manifest и artifact digest.
+- Secret/config durability checkpoint сам является обязательной protected host
+  write. До его завершения не начинается никакая provisioning mutation вне
+  checkpoint; после safe writes, file/directory `fsync`, atomic activation и
+  durable receipt для `plan_digest` разрешены packages/users/release/PostgreSQL/
+  migrations/systemd/proxy/ACL. До checkpoint recovery возвращается в
+  `WAITING_FOR_SECRETS`; после него browser/session loss не требует secrets
+  повторно.
+- D2.16 root bootstrap является узким fixed-input исключением только для
+  setup-plane bring-up и собственного durable receipt. Он не создаёт production
+  users/database/config/ACL/release и не выполняет Kanami provisioning; после
+  bring-up mutation boundary — только `kanami-installerd`.
+- Bootstrap provenance ограничен bundled/pinned trusted artifact либо fixed
+  allowlisted official HTTPS origin с manifest/digest verification. User/browser
+  не задают bootstrap/repository/artifact URL, branch или package list;
+  разрешены только fixed setup prerequisites из trusted metadata и exact
+  platform semantics, без moving `curl | sh`/`latest` trust model.
+- Pre-known public setup hostname валидируется bootstrap-ом до Setup Web и URL
+  показывается только после trusted HTTPS bring-up. Token/session expiry не
+  отменяет durable operation и никогда не создаёт новую. Reopen active/recoverable
+  operation создаёт новую auth session к той же operation; изменение config
+  после terminal operation создаёт новую operation с новым immutable
+  plan/digest и confirmation. Setup identity не имеет production
+  groups/secrets/DB/Bot Control, а server-side HTTP разрешён только к fixed
+  Discord API и root-trusted release/bootstrap origins, не user-controlled URL.
 
 - D2.12 и D2.13 разделены явной confirmation boundary: обычный installer не
   публикует Web Admin, а production mutation доступна только из trusted
@@ -1507,26 +1581,52 @@ automation, settings/env, migrations и intents для `/health` не добав
 
 ## Следующие шаги
 
-1. Провести clean Debian 13 VM smoke актуального объединённого D2.13 candidate:
-   Linux/Bash regression suite, cancellation/no-mutation, package first-start
-   suppression и cleanup, new/idempotent pairing, systemd ordering, local
-   Control/Web health, public automatic TLS и browser OAuth/OWNER/read/write
-   checklist. Проверить failure injection после каждого mutation stage,
-   manual-inspection diagnostics и capability Web Admin enable/grant/revoke +
-   `/move`, чтобы подтвердить canonical PostgreSQL ACL на чистой машине.
-2. При следующем реальном этапе Rules Compliance / reacceptance проверить
-   оставшийся production scenario: Publish новой Rules version → успешный DB
-   commit → automatic Bot Control sync → обновление существующего managed message
-   с сохранением message ID и отображением новой версии. Reminders, enforcement
-   и forced reacceptance пока не реализованы и остаются future work.
-3. Следующим audit-этапом отдельно спроектировать actor enrichment и `/history`,
-   не смешивая их с текущим ingestion.
-4. Отдельно спроектировать дедупликацию/коррекцию message events,
-   opt-out/data deletion, text channel analytics и pagination.
-5. После проверки Debian install/update flow определить backup и полноценный
-   production health monitoring.
-6. Для production migration с локального Caddy на отдельную Nginx VM: подготовить
-   DNS/TLS и remote Nginx config, создать отдельный web env/user/unit, задать
-   конкретный private `WEB_ADMIN_HOST` + opt-in, разрешить TCP/8000 только с IP
-   proxy VM, сохранить 8765/5432 loopback-only, затем выполнить OAuth и все четыре
-   bot-profile smoke tests. Только после проверки переключить DNS и убрать Caddy.
+### Installation & Lifecycle v2
+
+1. **D2.15:** реализовать read-only `kanami-installerd`, versioned protocol,
+   `preflight`, `validate_plan`, `status`, Unix socket, `SO_PEERCRED` и Debian 13
+   inspect-only provider без provisioning mutations.
+2. **D2.16:** добавить минимальный fixed-input root bootstrap с durable receipt
+   и временную setup plane с `kanami-setup`, pre-known public DNS HTTPS,
+   one-time token, session/CSRF/TTL и safe teardown без production provisioning.
+3. **D2.17:** создать русский Web Wizard с Discord validation, guild/OAuth/OWNER,
+   mini-wiki и immutable plan preview/digest.
+4. **D2.18:** добавить durable lock, stage journal, resource inspection, polling,
+   crash/reboot recovery и `WAITING_FOR_SECRETS`.
+5. **D2.19:** реализовать Managed Caddy inspect/render/apply/verify для public DNS
+   automatic HTTPS с foreign-state fail closed.
+6. **D2.20:** реализовать full provisioning через Debian provider: packages,
+   users, verified release, config, PostgreSQL, migrations/ACL, systemd, proxy и
+   verification. Только конкретная exact Ubuntu profile с provider/candidate
+   может перейти из `unsupported` в `acceptance_candidate`.
+7. **D2.21:** добавить `sudo kanami setup`: для active/recoverable operation —
+   reopen/re-auth той же durable operation; для изменения configuration после
+   terminal operation — новая mutating operation с новым immutable
+   plan/digest/confirmation. Также status/doctor/diagnostics, config generations
+   и safe TTL teardown.
+8. **D2.22:** создать immutable release/update/backup foundation с `release_id`,
+   atomic current pointer, manual update, DB backup gate и external proxy
+   contract.
+9. **D2.23:** выполнить final clean-VM acceptance exact Debian profile и одной
+   exact Ubuntu LTS amd64 profile, включая HTTPS wizard/install,
+   reboot/resume/reopen, manual update и injected failure recovery. Ubuntu
+   становится supported только после PASS.
+
+### Прочие отложенные направления
+
+- При следующем реальном этапе Rules Compliance / reacceptance проверить
+  production scenario: публикация новой Rules version → успешный DB commit →
+  automatic Bot Control sync → обновление существующего managed message с
+  сохранением message ID. Reminders, enforcement и forced reacceptance пока не
+  реализованы.
+- Отдельно спроектировать Audit actor enrichment и `/history`, не смешивая их с
+  текущим ingestion.
+- Отдельно спроектировать дедупликацию/коррекцию message events,
+  opt-out/data deletion, text channel analytics и pagination.
+- Определить полноценные backup/restore policy и production health monitoring;
+  D2.22 содержит только необходимый installation/update backup foundation.
+- Для production migration с локального Caddy на отдельную Nginx VM подготовить
+  DNS/TLS и remote Nginx config, отдельные web env/user/unit и конкретный private
+  `WEB_ADMIN_HOST` с opt-in; разрешить TCP/8000 только от proxy VM, сохранить
+  8765/5432 loopback-only, выполнить OAuth и bot-profile smoke, затем переключить
+  DNS и убрать Caddy.

@@ -1356,6 +1356,19 @@ reacceptance workflow намеренно отложены.
 
 ### Deployment
 
+Installation & Lifecycle v2 нормативно описан в
+[ADR 0001](adr/0001-installation-lifecycle-v2.md). Этот раздел намеренно
+разделяет уже работающую transitional реализацию и будущую target architecture:
+D2.14 фиксирует contracts, но сам не изменяет установленные hosts.
+
+#### 1. Transitional D2.12/D2.13 implementation
+
+D2.12/D2.13 остаются текущим рабочим installation reference. D2.13 имеет статус
+**transitional prototype — superseded by Web Setup redesign**: его
+interactive/root-shell clean-install UX не продолжается как target model, но
+существующие scripts и security tests сохраняются до feature и negative-test
+parity нового flow.
+
 - Первая официально документированная целевая среда — Debian 13, `systemd` и
   локальный PostgreSQL.
 - Приложение устанавливается в `/opt/kanami`, запускается отдельным system user
@@ -1590,7 +1603,110 @@ reacceptance workflow намеренно отложены.
   Неявный запуск menu требует TTY на stdin и stdout; non-TTY запуск без аргументов
   показывает help, invalid input повторяет menu, EOF завершается успешно.
 - Секреты не хранятся в Git.
-- Web-панель в MVP отсутствует.
+
+#### 2. Installation & Lifecycle v2 target architecture
+
+Целевая setup plane состоит из browser, временного или managed HTTPS proxy,
+непривилегированного `kanami-setup-web` под отдельной identity `kanami-setup` и
+root helper `kanami-installerd`. Helper не имеет TCP listener: Web process
+обращается к нему только через local Unix socket по bounded typed/versioned RPC,
+а helper проверяет exact peer identity через `SO_PEERCRED`. Production users
+`kanami` и `kanami-web` не являются setup identities и не имеют доступа к
+installer socket; `kanami-setup` не входит в их группы, не читает production
+env/secret generations/Bot Control secret/release filesystem, не имеет прямых
+PostgreSQL credentials и не запускает privileged subprocesses. Production
+inspection и mutations доступны Setup Web только через typed helper RPC;
+временно принятые `SecretInputs` передаются one-shot без сохранения и logging.
+
+D2.16 допускает единственное ограниченное privileged исключение: небольшой
+root-owned, fixed-input, idempotent inspect/apply/verify bootstrap может создать
+только `kanami-setup`, setup-only directories/assets/units, installer
+socket/service, temporary Managed Caddy setup route и durable bootstrap receipt.
+Он fail closed, не принимает generic command/package/path/URL input и не создаёт
+production users/database/config/ACL/release, не запускает migrations или
+Kanami provisioning. После bring-up все privileged production mutations
+принадлежат только `kanami-installerd`.
+
+Bootstrap implementation/assets берутся только из bundled/pinned trusted
+artifact либо с fixed allowlisted official HTTPS origin после immutable
+manifest/digest verification. User/browser не задают bootstrap/repository/
+artifact URL, branch или arbitrary package list; unverified moving `curl | sh`
+и `latest` branch не являются trust model. На clean host разрешён только
+фиксированный allowlisted набор setup prerequisites из trusted metadata и exact
+platform semantics, а не generic `install_package(name)`.
+
+Подтверждаемая операция задаётся immutable secret-free `InstallPlan`,
+канонизированным по RFC 8785/JCS и связанным с SHA-256 digest. `SecretInputs`
+передаются отдельно и write-only; root-generated PostgreSQL/Bot Control secrets
+не попадают в plan, durable state, logs, diagnostics, argv, URL или browser
+storage. После подтверждения root side MUST получить связанные с digest secrets,
+сгенерировать root-side secrets, безопасно записать полную protected config
+generation, выполнить file и directory `fsync`, atomic activation и durable
+generation receipt для digest. Checkpoint сам является обязательной protected
+host write; до его завершения запрещена любая provisioning mutation вне него.
+Crash/session loss до checkpoint возвращает `WAITING_FOR_SECRETS` без начатого
+provisioning; после checkpoint browser loss не требует повторного ввода secrets
+и operation продолжается по durable state.
+
+Состояние operation, stage и inspected resource разделено. До и после каждой
+mutation пишется durable transition; после crash сначала выполняется inspection.
+`PARTIAL` требует stage-specific recovery, `FOREIGN` всегда fail closed.
+Глобальный rollback не обещается, а release/config rollback не равен PostgreSQL
+migration rollback. Durable state/lock появляются в D2.18 до Managed Caddy
+production mutations в D2.19.
+
+Host platform разрешается только root-side exact profile resolver. Первый
+поддерживаемый и проверенный profile —
+`debian-13-amd64-systemd-apt-v1`. Ubuntu пока не поддерживается: только одна
+точная Ubuntu LTS amd64 profile после появления provider/candidate в D2.20 может
+стать `acceptance_candidate`, а supported — только после D2.23 acceptance.
+Generic Ubuntu LTS остаётся `unsupported` и не является profile.
+Mint, Pop!_OS, иные derivatives, unknown distro, non-systemd, другое package
+family и неподтверждённые architectures отклоняются fail closed. `ID_LIKE`
+используется только для diagnostics. Packages, binary paths, argv, units,
+PostgreSQL operations, ACL и templates выбираются закрытым `PlatformProvider`
+из verified release, а не client input.
+
+Debian profile exact-match использует `os_id=debian`, `version_id=13`,
+`package_architecture=amd64`, `systemd` и `apt/dpkg` family. Наблюдавшиеся на
+acceptance host версии systemd 257 и APT 3.0.3 — evidence, не version pins;
+совместимые Debian security updates сами по себе не меняют identity profile.
+
+Первый target proxy/TLS profile — заранее известный public DNS hostname,
+Managed Caddy и public ACME HTTPS. Private-IP browser-trusted HTTPS, public-IP
+TLS и automatic external proxy management не обещаются. Foreign proxy не
+merge/rewrite автоматически. Target release boundary использует immutable
+content-addressed `release_id` только из root-trusted bundled catalog либо
+catalog с fixed allowlisted HTTPS origin. Digest сам не доказывает publisher;
+helper проверяет catalog membership, manifest и artifact digest. Browser/plan не
+задают Git path, branch, remote, PAT, repository/artifact/catalog URL или
+self-selected digest. Текущие `/opt/kanami` Git checkout и `git pull --ff-only`
+остаются transitional. Core automatic update по умолчанию выключен, default
+policy — notify/manual.
+
+Public setup hostname поступает trusted bootstrap input до wizard. Bootstrap
+валидирует syntax, network/DNS/TLS, поднимает trusted HTTPS endpoint и только
+затем показывает URL; HTTP-first wizard и выбор первого hostname внутри него
+запрещены. Token TTL, browser session TTL и durable operation независимы:
+auth expiry не отменяет `CONFIRMED`/`RUNNING` и не прерывает stages, а reopen
+для active/recoverable `CONFIRMED`/`RUNNING`/`BLOCKED`/`WAITING_*` operation
+создаёт новую auth session к той же operation. Browser expiry никогда не создаёт
+operation. Изменение configuration после terminal operation создаёт новую
+mutating operation с новым immutable plan/digest и confirmation; confirmed plan
+существующей operation не редактируется. Active operation нельзя лишать recovery
+destructive TTL teardown. Setup responses имеют restrictive CSP
+(`default-src 'self'; frame-ancestors 'none'`), `nosniff`, `no-store` и
+`no-referrer`. Discord validation использует только fixed trusted Discord API;
+user-controlled HTTP requests и requests к user-controlled scheme/host/URL
+запрещены. Разрешённые fixed trusted destinations — Discord API и root-trusted
+fixed release/bootstrap origins.
+
+Root RPC не предоставляет generic `execute`, shell, script, file, package,
+systemd, SQL, arbitrary argv/path/unit/package/URL primitives. В D2.15 allowlist
+содержит только read-only `preflight`, `validate_plan` и `status`, без
+provisioning mutations. Полные protocol, schema, threat model, support matrix,
+compatibility rules и roadmap D2.15–D2.23 зафиксированы в
+[ADR 0001](adr/0001-installation-lifecycle-v2.md).
 
 Docker/container deployment не входит в первый официальный install flow и может
 быть спроектирован отдельно. Полноценный production health monitoring и

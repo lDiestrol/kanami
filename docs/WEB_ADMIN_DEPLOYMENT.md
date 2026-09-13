@@ -1,5 +1,12 @@
 # Публичное развёртывание Kanami Web Admin
 
+> **Transitional D2.12/D2.13 flow.** Документ остаётся рабочим reference для
+> текущих installations и manual proxy deployments, но не является target
+> architecture будущего Web Setup. D2.13 superseded by Web Setup redesign;
+> целевая setup/root-helper/release модель описана в
+> [ADR 0001](adr/0001-installation-lifecycle-v2.md). `sudo kanami web-setup`
+> ниже — transitional operation, а не конечная будущая модель.
+
 Debian 13 installer D2.12 может опционально подготовить Web Admin foundation:
 отдельные `kanami-web`, runtime, protected env, least-privilege DB role и
 systemd unit. Он не устанавливает proxy/TLS, не проверяет публичный callback, не
