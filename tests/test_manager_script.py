@@ -2092,6 +2092,9 @@ def test_unavailable_systemctl_is_reported_without_shell_failure(
     else:
         isolated_bin = tmp_path / "isolated-bin"
         isolated_bin.mkdir()
+        bash_path = shutil.which("bash")
+        assert bash_path is not None
+        (isolated_bin / "bash").symlink_to(bash_path)
         (isolated_bin / "git").symlink_to(git_path)
         environment["PATH"] = str(isolated_bin)
 

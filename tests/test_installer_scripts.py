@@ -708,7 +708,7 @@ def test_web_git_metadata_uses_web_home_as_cwd(
             readonly WEB_SERVICE_HOME={shlex_quote(web_home.as_posix())}
             readonly INSTALL_DIR="/opt/kanami"
             log() {{ :; }}
-            runuser() {{ printf '%s\\n' "$PWD"; }}
+            runuser() {{ printf '%s\\n' "$PWD" >&2; }}
             {function}
             cd /
             configure_web_git_metadata
@@ -717,7 +717,7 @@ def test_web_git_metadata_uses_web_home_as_cwd(
     )
 
     assert result.returncode == 0
-    assert result.stdout.splitlines() == [web_home.as_posix(), web_home.as_posix()]
+    assert result.stderr.splitlines() == [web_home.as_posix(), web_home.as_posix()]
 
 
 def test_web_database_grants_are_explicit_and_least_privilege() -> None:
